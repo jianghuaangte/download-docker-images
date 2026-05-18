@@ -59,7 +59,7 @@ jobs:
         continue-on-error: true
 
       - name: Create new release and upload
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@v2
         with:
           tag: ${{ env.RELEASE_TAG }}
           name: "Docker Images Batch Build"
