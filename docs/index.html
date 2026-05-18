@@ -328,38 +328,22 @@ function getAcceleratedDownloadUrl(image) {
 }
 
 // 使用 GitHub API 检测指定 release (docker-images) 下是否存在该文件
-async function checkFileExistsViaAPI(imageName) {
-  const fileName = getTarFileName(imageName);
+async function checkFileExists(url) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(GITHUB_API_RELEASES, {
-      method: 'GET',
-      headers: { 'Accept': 'application/vnd.github.v3+json' },
+
+    const response = await fetch(url, {
+      method: 'HEAD',
+      redirect: 'follow',
       signal: controller.signal,
       cache: 'no-store'
     });
+
     clearTimeout(timeoutId);
-    
-    if (response.status === 404) {
-      // release 不存在
-      return false;
-    }
-    
-    if (!response.ok) {
-      console.warn('GitHub API 请求失败:', response.status);
-      return false;
-    }
-    
-    const release = await response.json();
-    // 检查 assets 中是否有匹配的文件名
-    if (release.assets && Array.isArray(release.assets)) {
-      const found = release.assets.some(asset => asset.name === fileName);
-      return found;
-    }
-    return false;
+
+    return response.ok;
   } catch (err) {
-    console.error('GitHub API 检测失败:', err);
     return false;
   }
 }
