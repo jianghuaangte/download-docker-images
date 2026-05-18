@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-<title>Docker 镜像批量下载器 | 批量触发 | GitHub API 检测</title>
+<title>Docker 镜像批量下载器 | 批量触发 | 大文件支持 | GitHub API 检测</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -156,6 +156,15 @@
   body.dark .theme-toggle-btn:hover { background: #334155; }
   
   .btn-hover-scale:active { transform: scale(0.97); }
+  
+  /* 加载动画 */
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .fa-spin {
+    animation: spin 1s linear infinite;
+  }
 </style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-5 relative">
@@ -176,7 +185,7 @@
         <i class="fab fa-docker text-3xl text-white"></i>
       </div>
       <h1 class="text-3xl font-bold tracking-tight light-text-primary dark-text-primary">批量镜像下载器</h1>
-      <p class="text-sm light-text-muted dark-text-muted">批量触发 GitHub Actions · 一次构建所有镜像 · 支持 GitHub 加速</p>
+      <p class="text-sm light-text-muted dark-text-muted">批量触发 GitHub Actions · 自动分割大文件 · 支持 GitHub 加速</p>
     </div>
 
     <form id="dockerForm" class="flex flex-col gap-5">
@@ -189,7 +198,7 @@
         <textarea id="imageList" placeholder="例如:&#10;nginx:latest&#10;linuxserver/obsidian:latest&#10;mysql:8.0&#10;redis:7-alpine"
           class="w-full border rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition font-mono text-sm"
           rows="8" required></textarea>
-        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 支持格式: 镜像名[:tag] , 多个镜像将一次性批量构建</p>
+        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 支持格式: 镜像名[:tag] , 多个镜像将一次性批量构建，大文件会自动分割</p>
       </div>
 
       <div>
@@ -235,7 +244,7 @@
     </form>
 
     <div class="border-t pt-3 text-center text-xs light-border dark-border light-text-light dark-text-light">
-      <i class="far fa-clock"></i> 触发后 GitHub Actions 会批量构建所有镜像，请耐心等待
+      <i class="far fa-clock"></i> 触发后 GitHub Actions 会批量构建所有镜像，大文件自动分割，请耐心等待
     </div>
   </div>
 
@@ -316,7 +325,7 @@ const taskCounterSpan = document.getElementById('taskCounter');
 let statusRowsMap = new Map();
 
 function getTarFileName(image) {
-  return image.replace(/[\/:]/g, '_') + '.tar';
+  return image.replace(/[\/:]/g, '_') + '.tar.gz';
 }
 
 function getOriginalDownloadUrl(image) {
@@ -329,6 +338,28 @@ function getAcceleratedDownloadUrl(image) {
   if (!mirror) return originalUrl;
   mirror = mirror.replace(/\/+$/, '');
   return `${mirror}/${originalUrl}`;
+}
+
+// 获取文件大小
+async function getFileSize(url) {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(url, { method: 'HEAD', signal: controller.signal });
+    clearTimeout(timeoutId);
+    const contentLength = response.headers.get('content-length');
+    return contentLength ? parseInt(contentLength) : null;
+  } catch (err) {
+    console.error('Failed to get file size:', err);
+    return null;
+  }
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '未知大小';
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + sizes[i];
 }
 
 // 使用 GitHub API 检测指定 release 下是否存在该文件
@@ -487,12 +518,22 @@ async function performCheck(imageName) {
         copyToClipboard(urlToCopy, copyBtn);
       };
       
-      infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！可以下载了。`;
-      infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
+      // 获取文件大小信息
+      try {
+        const fileSize = await getFileSize(finalDownloadUrl);
+        if (fileSize && fileSize > 100 * 1024 * 1024) {  // 大于 100MB
+          infoMsg.innerHTML = `<i class="fas fa-info-circle text-blue-500"></i> 文件已就绪！大小: ${formatFileSize(fileSize)}，下载可能需要一些时间。`;
+        } else {
+          infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！可以下载了。`;
+        }
+      } catch (e) {
+        infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！可以下载了。`;
+      }
+      
       statusBadge.innerText = "✅ 可下载";
       statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-emerald dark-badge-emerald";
     } else {
-      infoMsg.innerHTML = `<i class="fas fa-clock text-amber-500"></i> 文件尚未在 Releases 中找到，请等待 GitHub Actions 执行完成（通常需要5-10分钟）。`;
+      infoMsg.innerHTML = `<i class="fas fa-clock text-amber-500"></i> 文件尚未在 Releases 中找到，请等待 GitHub Actions 执行完成（通常需要5-15分钟，大镜像需要更长时间）。`;
       infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
       statusBadge.innerText = "⏳ 构建中";
       statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
@@ -561,7 +602,7 @@ async function triggerBatchImages(images, apiKey) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        images: images,  // 发送镜像数组
+        images: images,
         key: apiKey 
       }),
       signal: controller.signal
@@ -573,10 +614,10 @@ async function triggerBatchImages(images, apiKey) {
     if (result.success) {
       for (const img of images) {
         updateTriggerStatus(img, true, '批量触发成功');
-        // 延迟5秒后自动检测一次
+        // 延迟8秒后自动检测一次（大镜像需要更长时间）
         setTimeout(() => {
           if (statusRowsMap.has(img)) performCheck(img);
-        }, 5000);
+        }, 8000);
       }
     } else {
       for (const img of images) {
@@ -633,7 +674,7 @@ checkAllBtn.onclick = async () => {
   for (let [img, record] of statusRowsMap.entries()) {
     if (record.statusBadge.innerText !== '❌ 触发失败') {
       await performCheck(img);
-      await new Promise(resolve => setTimeout(resolve, 500)); // 延迟避免API限流
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
   
@@ -660,7 +701,6 @@ form.onsubmit = async (e) => {
     statusPanel.innerHTML = '';
   }
   
-  // 批量触发所有镜像（只发送一次请求）
   await triggerBatchImages(images, apiKey);
   
   updateTaskCounter();
