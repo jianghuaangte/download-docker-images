@@ -12,26 +12,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout 仓库
       - uses: actions/checkout@v4
 
+      # 2️⃣ 设置 Docker
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
+      # 3️⃣ 登录 Docker Hub（如果是私有镜像，需要 Secrets: DOCKER_USERNAME + DOCKER_PASSWORD）
+      - name: Log in to Docker Hub
+        if: ${{ secrets.DOCKER_USERNAME && secrets.DOCKER_PASSWORD }}
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # 4️⃣ 拉取 Docker 镜像
       - name: Pull Docker image
         run: docker pull ${{ github.event.inputs.image }}
 
+      # 5️⃣ 保存为 .tar
       - name: Save image as tar
         run: |
           IMAGE_NAME=$(echo ${{ github.event.inputs.image }} | tr '/' '_' | tr ':' '_')
           docker save -o $IMAGE_NAME.tar ${{ github.event.inputs.image }}
           echo "Saved Docker image as $IMAGE_NAME.tar"
 
+      # 6️⃣ 删除旧 release（避免 422 already_exists）
+      - name: Delete old release if exists
+        run: |
+          gh release delete docker-images -y || echo "No existing release"
+        env:
+          GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
+
+      # 7️⃣ 上传 .tar 到固定 release
       - name: Upload tar to fixed release
         uses: ncipollo/release-action@v1
         with:
-          tag: docker-images                     # ✅ 固定 tag
+          tag: docker-images                     # 固定 tag
           name: Docker Image ${{ github.event.inputs.image }}
-          artifacts: "*.tar"                     # ✅ 上传 .tar 文件
-          token: ${{ secrets.JIANG_PAT_TOKEN }} # PAT
-          replacesArtifacts: true                # ✅ 覆盖旧的 artifacts
+          artifacts: "*.tar"                     # 上传 .tar 文件
+          token: ${{ secrets.JIANG_PAT_TOKEN }} # 使用 PAT
+          replacesArtifacts: true                # 覆盖旧的 artifacts
           skipIfReleaseExists: false             # 强制更新
+          generateReleaseNotes: false
