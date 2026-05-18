@@ -1,126 +1,114 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>批量 Docker 镜像下载器</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { background: #f8fafc; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>批量 Docker 镜像下载器</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{background:#f8fafc}</style>
 </head>
 <body class="min-h-screen flex items-center justify-center font-sans p-4">
 
-  <div class="max-w-5xl w-full grid grid-cols-1 md:grid-cols-2 gap-6">
+<div class="max-w-5xl w-full grid grid-cols-1 md:grid-cols-2 gap-6">
 
-    <!-- 下载表单 -->
-    <div class="bg-white rounded-2xl shadow-lg p-8 flex flex-col gap-6">
-      <div class="text-center">
-        <h1 class="text-3xl font-bold text-gray-800 mb-2">Docker 镜像批量下载器</h1>
-        <p class="text-gray-500">输入多个 Docker 镜像，异步触发 GitHub Actions 并生成 tar 文件</p>
-      </div>
-
-      <form id="dockerForm" class="flex flex-col gap-4">
-        <div>
-          <label class="block font-medium text-gray-700 mb-1">Docker 镜像名称（每行一个） *</label>
-          <textarea id="imageList" placeholder="例如：\nnginx:latest\nredis:7.2.1\nubuntu:22.04"
-            class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-200"
-            rows="6" required></textarea>
-          <p class="text-gray-400 text-sm mt-1">每行输入一个镜像名称</p>
-        </div>
-
-        <div>
-          <label class="block font-medium text-gray-700 mb-1">授权码 *</label>
-          <input type="password" id="apiKey" placeholder="请输入授权码"
-            class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-200"
-            required>
-        </div>
-
-        <button type="submit" class="mt-2 bg-green-100 text-green-800 font-semibold py-2 rounded-lg hover:bg-green-200 transition">
-          开始批量下载
-        </button>
-      </form>
+  <!-- 下载表单 -->
+  <div class="bg-white rounded-2xl shadow-lg p-8 flex flex-col gap-6">
+    <div class="text-center">
+      <h1 class="text-3xl font-bold text-gray-800 mb-2">Docker 镜像批量下载器</h1>
+      <p class="text-gray-500">输入多个 Docker 镜像，一键触发下载</p>
     </div>
 
-    <!-- 下载状态卡片 -->
-    <div class="bg-white rounded-2xl shadow-lg p-6 flex flex-col gap-4">
-      <h2 class="text-lg font-semibold text-green-700 mb-4 text-center">下载状态</h2>
-      <div id="statusPanel" class="flex flex-col gap-2 max-h-[70vh] overflow-y-auto">
-        <p class="text-gray-500 text-center">暂无任务，填写镜像名称后开始下载</p>
+    <form id="dockerForm" class="flex flex-col gap-4">
+      <div>
+        <label class="block font-medium text-gray-700 mb-1">Docker 镜像名称（每行一个） *</label>
+        <textarea id="imageList" placeholder="例如：\nnginx:latest\nredis:7.2.1\nubuntu:22.04"
+          class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-200"
+          rows="6" required></textarea>
+        <p class="text-gray-400 text-sm mt-1">每行输入一个镜像名称</p>
       </div>
-    </div>
 
+      <div>
+        <label class="block font-medium text-gray-700 mb-1">授权码 *</label>
+        <input type="password" id="apiKey" placeholder="请输入授权码"
+          class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-200"
+          required>
+      </div>
+
+      <button type="submit" class="mt-2 bg-green-100 text-green-800 font-semibold py-2 rounded-lg hover:bg-green-200 transition">
+        开始批量下载
+      </button>
+    </form>
   </div>
 
-  <script>
-    const form = document.getElementById('dockerForm');
-    const statusPanel = document.getElementById('statusPanel');
-    const WORKER_URL = 'https://download-docker-images.jianghangte.workers.dev/trigger'; // 替换为你的 Workers URL
-    const RELEASE_BASE_URL = 'https://github.com/jianghuaangte/download-docker-images/releases/download/'; // Release URL 基础地址
+  <!-- 下载状态 -->
+  <div class="bg-white rounded-2xl shadow-lg p-6 flex flex-col gap-4">
+    <h2 class="text-lg font-semibold text-green-700 mb-4 text-center">下载状态</h2>
+    <div id="statusPanel" class="flex flex-col gap-2 max-h-[70vh] overflow-y-auto">
+      <p class="text-gray-500 text-center">暂无任务</p>
+    </div>
+  </div>
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const imagesText = document.getElementById('imageList').value.trim();
-      const key = document.getElementById('apiKey').value.trim();
+</div>
 
-      if (!imagesText || !key) {
-        alert('请填写镜像名称和授权码');
-        return;
+<script>
+const form = document.getElementById('dockerForm');
+const statusPanel = document.getElementById('statusPanel');
+const WORKER_URL = 'https://download-docker-images.jianghangte.workers.dev/trigger';
+const RELEASE_BASE_URL = 'https://github.com/jianghuaangte/download-docker-images/releases/download/';
+
+form.addEventListener('submit', async e=>{
+  e.preventDefault();
+  const images = document.getElementById('imageList').value.trim().split('\n').map(s=>s.trim()).filter(s=>s);
+  const key = document.getElementById('apiKey').value.trim();
+  statusPanel.innerHTML='';
+
+  const statusRows={};
+  images.forEach(img=>{
+    const div=document.createElement('div');
+    div.classList.add('p-2','border','border-gray-200','rounded','flex','justify-between','items-center');
+    const span=document.createElement('span');
+    span.textContent=`镜像 ${img} ：等待触发...`;
+    span.classList.add('text-gray-600');
+    div.appendChild(span);
+    const link=document.createElement('a');
+    link.classList.add('text-green-700','hidden','ml-4','font-medium');
+    div.appendChild(link);
+    statusPanel.appendChild(div);
+    statusRows[img]={span,link};
+  });
+
+  images.forEach(async img=>{
+    const {span,link}=statusRows[img];
+    span.textContent=`镜像 ${img} ：触发中... ⏳`;
+
+    try{
+      const res=await fetch(WORKER_URL,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({image:img,key})
+      });
+      const data=await res.json();
+      if(data.success){
+        span.textContent=`🎉 镜像 ${img} ：任务已触发！`;
+        span.classList.remove('text-gray-600');
+        span.classList.add('text-green-600');
+
+        const tarName=img.replace(/[\/:]/g,'_')+'.tar.gz';
+        link.href=RELEASE_BASE_URL+tarName;
+        link.textContent='下载 tar';
+        link.target='_blank';
+        link.classList.remove('hidden');
+      }else{
+        span.textContent=`❌ 镜像 ${img} ：触发失败 - ${data.message||'未知错误'}`;
+        span.classList.add('text-red-500');
       }
-
-      const images = imagesText.split('\n').map(s => s.trim()).filter(s => s);
-      statusPanel.innerHTML = '';
-
-      // 为每个镜像创建状态行
-      const statusRows = {};
-      images.forEach(image => {
-        const div = document.createElement('div');
-        div.classList.add('p-2', 'border', 'border-gray-200', 'rounded', 'flex', 'justify-between', 'items-center');
-        const span = document.createElement('span');
-        span.textContent = `镜像 ${image} ：等待触发...`;
-        span.classList.add('text-gray-600');
-        div.appendChild(span);
-        const link = document.createElement('a'); // 下载链接占位
-        link.classList.add('text-green-700', 'hidden', 'ml-4', 'font-medium');
-        div.appendChild(link);
-        statusPanel.appendChild(div);
-        statusRows[image] = { span, link };
-      });
-
-      // 异步触发每个镜像
-      images.forEach(async (image) => {
-        const { span, link } = statusRows[image];
-        span.textContent = `镜像 ${image} ：触发中... ⏳`;
-
-        try {
-          const res = await fetch(WORKER_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image, key })
-          });
-          const data = await res.json();
-          if (data.success) {
-            span.textContent = `🎉 镜像 ${image} ：任务已触发！`;
-            span.classList.remove('text-gray-600');
-            span.classList.add('text-green-600');
-
-            // 假设 Release 名称和 tar 文件名规则可用
-            const tarName = image.replace(/[\/:]/g, '_') + '.tar.gz';
-            link.href = RELEASE_BASE_URL + tarName;
-            link.textContent = '下载 tar';
-            link.target = '_blank';
-            link.classList.remove('hidden');
-          } else {
-            span.textContent = `❌ 镜像 ${image} ：触发失败 - ${data.message || '未知错误'}`;
-            span.classList.add('text-red-500');
-          }
-        } catch (err) {
-          span.textContent = `❌ 镜像 ${image} ：请求出错 - ${err.message}`;
-          span.classList.add('text-red-500');
-        }
-      });
-    });
-  </script>
+    }catch(err){
+      span.textContent=`❌ 镜像 ${img} ：请求出错 - ${err.message}`;
+      span.classList.add('text-red-500');
+    }
+  });
+});
+</script>
 
 </body>
 </html>
