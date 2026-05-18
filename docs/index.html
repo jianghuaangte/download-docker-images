@@ -147,6 +147,15 @@
   .btn-hover-scale:active { transform: scale(0.97); }
   .file-list { max-height: 200px; overflow-y: auto; }
   .file-item { font-size: 11px; padding: 4px 8px; margin: 2px 0; border-radius: 6px; }
+  code {
+    background: #f3f4f6;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  body.dark code {
+    background: #334155;
+  }
 </style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-5 relative">
@@ -282,7 +291,7 @@ const clearAllStatusBtn = document.getElementById('clearAllStatus');
 const refreshReleaseBtn = document.getElementById('refreshReleaseBtn');
 
 let statusRowsMap = new Map();
-let releaseAssets = []; // 存储当前 Release 的所有文件
+let releaseAssets = [];
 
 // 获取加速后的下载链接
 function getAcceleratedUrl(path) {
@@ -314,41 +323,26 @@ async function fetchReleaseAssets() {
   }
 }
 
-// 从文件列表中提取镜像名
-function extractImageNameFromFile(filename) {
-  // 匹配模式: 镜像名.tar.gz 或 镜像名.part.aa 等
-  let name = filename.replace(/\.tar\.gz$/, '').replace(/\.part\..*$/, '');
-  // 将下划线还原为斜杠和冒号
-  name = name.replace(/_/g, '/').replace(/--/g, ':');
-  // 处理可能的格式问题
-  name = name.replace(/\//g, '/').replace(/:/g, ':');
-  return name;
-}
-
-// 检查镜像是否完整（所有分片都存在或单文件存在）
+// 检查镜像是否完整
 function checkImageComplete(imageName) {
-  const safePrefix = imageName.replace(/\//g, '_').replace(/:/g, '_');
-  const relatedFiles = releaseAssets.filter(asset => {
-    return asset.name.startsWith(safePrefix);
-  });
+  const safeName = imageName.replace(/\//g, '_').replace(/:/g, '_');
+  const relatedFiles = releaseAssets.filter(asset => asset.name.startsWith(safeName));
   
   if (relatedFiles.length === 0) return { complete: false, files: [], size: 0 };
   
-  // 检查是否有完整的 tar.gz 文件
-  const hasCompleteFile = relatedFiles.some(f => f.name === `${safePrefix}.tar.gz`);
+  const hasCompleteFile = relatedFiles.some(f => f.name === `${safeName}.tar.gz`);
   if (hasCompleteFile) {
-    const file = relatedFiles.find(f => f.name === `${safePrefix}.tar.gz`);
-    return { complete: true, files: [file], size: file.size, isSplit: false };
+    const file = relatedFiles.find(f => f.name === `${safeName}.tar.gz`);
+    return { complete: true, files: [file], size: file.size, isSplit: false, safeName: safeName };
   }
   
-  // 检查是否有分片文件
   const partFiles = relatedFiles.filter(f => f.name.includes('.part.'));
   if (partFiles.length > 0) {
     const totalSize = partFiles.reduce((sum, f) => sum + f.size, 0);
-    return { complete: true, files: partFiles, size: totalSize, isSplit: true };
+    return { complete: true, files: partFiles, size: totalSize, isSplit: true, safeName: safeName };
   }
   
-  return { complete: false, files: relatedFiles, size: 0, isSplit: false };
+  return { complete: false, files: relatedFiles, size: 0, isSplit: false, safeName: safeName };
 }
 
 // 格式化文件大小
@@ -405,7 +399,7 @@ async function updateTaskDisplay(imageName) {
   
   const { fileListDiv, downloadAllBtn, infoMsg, statusBadge } = record;
   
-  const { complete, files, size, isSplit } = checkImageComplete(imageName);
+  const { complete, files, size, isSplit, safeName } = checkImageComplete(imageName);
   
   if (!complete || files.length === 0) {
     fileListDiv.innerHTML = '<div class="text-muted">暂无可用文件</div>';
@@ -414,36 +408,53 @@ async function updateTaskDisplay(imageName) {
     return;
   }
   
-  // 显示文件列表
   let filesHtml = '';
   if (isSplit) {
-    filesHtml = `<div class="mb-1 text-amber-600 dark:text-amber-400"><i class="fas fa-cut"></i> 镜像已分割为 ${files.length} 个分片:</div>`;
+    filesHtml = `<div class="mb-2 text-amber-600 dark:text-amber-400"><i class="fas fa-cut"></i> 镜像已分割为 ${files.length} 个分片:</div>`;
     files.forEach((file, idx) => {
       const downloadUrl = getAcceleratedUrl(file.name);
       filesHtml += `
-        <div class="file-item flex items-center justify-between gap-2 light-bg-gray dark-bg-gray p-1 rounded">
+        <div class="file-item flex items-center justify-between gap-2 light-bg-gray dark-bg-gray p-1 rounded mb-1">
           <span class="truncate">📦 分片 ${String(idx + 1).padStart(2, '0')}: ${file.name}</span>
           <span class="text-muted text-xs">${formatSize(file.size)}</span>
           <a href="${downloadUrl}" download class="text-emerald-600 hover:text-emerald-700" target="_blank"><i class="fas fa-download"></i></a>
         </div>
       `;
     });
-    filesHtml += `<div class="mt-2 text-xs text-muted">⚠️ 下载所有分片后，使用以下命令合并: <code class="light-bg-gray dark-bg-gray px-1 rounded">cat ${files[0].name.replace(/\.part\..*/, '')}.part.* > image.tar</code></div>`;
+    // 优化后的命令显示 - 单行完整命令
+    const mergeCmd = `cat ${safeName}.part.* > ${safeName}.tar`;
+    const loadCmd = `docker load -i ${safeName}.tar`;
+    filesHtml += `
+      <div class="mt-3 p-2 light-bg-gray dark-bg-gray rounded text-xs">
+        <div class="font-semibold mb-1"><i class="fas fa-terminal"></i> 导入步骤:</div>
+        <div class="space-y-1">
+          <div>1️⃣ 合并分片: <code class="block mt-1 p-1 bg-white dark:bg-gray-800 rounded">${mergeCmd}</code></div>
+          <div>2️⃣ 加载镜像: <code class="block mt-1 p-1 bg-white dark:bg-gray-800 rounded">${loadCmd}</code></div>
+        </div>
+      </div>
+    `;
   } else {
     const file = files[0];
     const downloadUrl = getAcceleratedUrl(file.name);
+    const isGz = file.name.endsWith('.tar.gz');
+    const loadCmd = isGz 
+      ? `gunzip ${file.name} && docker load -i ${file.name.replace('.gz', '')}`
+      : `docker load -i ${file.name}`;
     filesHtml = `
       <div class="file-item flex items-center justify-between gap-2 light-bg-gray dark-bg-gray p-2 rounded">
         <span><i class="fas fa-file-archive"></i> ${file.name}</span>
         <span class="text-muted text-xs">${formatSize(file.size)}</span>
         <a href="${downloadUrl}" download class="text-emerald-600 hover:text-emerald-700" target="_blank"><i class="fas fa-download"></i></a>
       </div>
+      <div class="mt-2 p-2 light-bg-gray dark-bg-gray rounded text-xs">
+        <div><i class="fas fa-terminal"></i> 导入命令:</div>
+        <code class="block mt-1 p-1 bg-white dark:bg-gray-800 rounded">${loadCmd}</code>
+      </div>
     `;
   }
   
   fileListDiv.innerHTML = filesHtml;
   
-  // 启用下载全部按钮（下载所有分片）
   if (files.length > 0) {
     downloadAllBtn.disabled = false;
     downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-btn-download dark-btn-download";
@@ -488,7 +499,6 @@ async function performCheck(imageName, forceRefresh = false) {
 
 // 触发批量构建
 async function triggerBatchImages(images, apiKey) {
-  // 创建所有任务行
   for (const img of images) {
     if (!statusRowsMap.has(img)) {
       const task = createTaskRow(img);
@@ -524,7 +534,6 @@ async function triggerBatchImages(images, apiKey) {
         record.checkBtn.disabled = false;
       }
       
-      // 30秒后自动刷新一次
       setTimeout(async () => {
         await fetchReleaseAssets();
         for (const img of images) {
@@ -604,7 +613,6 @@ function escapeHtml(str) {
   });
 }
 
-// 初始加载 Release 信息
 fetchReleaseAssets();
 </script>
 </body>
