@@ -20,9 +20,8 @@ jobs:
       - name: Parse images list
         id: set-matrix
         run: |
-          IMAGES_LIST=$(echo '${{ github.event.inputs.images }}' | sed '/^$/d' | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          IMAGES_LIST=$(echo '${{ github.event.inputs.images }}' | grep -v '^$' | jq -R -s -c 'split("\n") | map(select(. != ""))')
           echo "matrix=${IMAGES_LIST}" >> $GITHUB_OUTPUT
-          echo "Will build ${IMAGES_LIST}"
 
   build:
     needs: prepare
@@ -47,13 +46,31 @@ jobs:
         run: |
           IMAGE_NAME=$(echo "${{ matrix.image }}" | tr '/' '_' | tr ':' '_')
           docker save -o "$IMAGE_NAME.tar" "${{ matrix.image }}"
-          echo "IMAGE_FILE=$IMAGE_NAME.tar" >> $GITHUB_ENV
+          
+          # 检查文件大小，如果大于1GB则分割
+          FILE_SIZE=$(stat -c%s "$IMAGE_NAME.tar")
+          if [ $FILE_SIZE -gt 1073741824 ]; then
+            echo "File size ${FILE_SIZE} bytes, splitting..."
+            split -b 500M "$IMAGE_NAME.tar" "${IMAGE_NAME}.part."
+            echo "SPLIT=true" >> $GITHUB_ENV
+          else
+            echo "SPLIT=false" >> $GITHUB_ENV
+          fi
 
-      - name: Upload artifact
+      - name: Upload artifact (small file)
+        if: env.SPLIT == 'false'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.IMAGE_FILE }}
-          path: ${{ env.IMAGE_FILE }}
+          name: ${{ matrix.image }}
+          path: "*.tar"
+          retention-days: 1
+
+      - name: Upload artifact (split parts)
+        if: env.SPLIT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.image }}
+          path: "*.part.*"
           retention-days: 1
 
   release:
@@ -66,9 +83,24 @@ jobs:
         with:
           path: ./artifacts
 
-      - name: Move all tar files
+      - name: Reassemble split files
         run: |
-          find ./artifacts -name "*.tar" -type f -exec mv {} . \;
+          cd ./artifacts
+          # 查找被分割的文件并重组
+          for dir in */; do
+            cd "$dir"
+            if ls *.part.* 2>/dev/null | grep -q .; then
+              BASE_NAME=$(ls *.part.* | head -1 | sed 's/\.part\..*//')
+              cat ${BASE_NAME}.part.* > ${BASE_NAME}.tar
+              rm ${BASE_NAME}.part.*
+              echo "Reassembled ${BASE_NAME}.tar"
+            fi
+            cd ..
+          done
+          
+          # 收集所有 tar 文件
+          find . -name "*.tar" -type f -exec mv {} ./ \;
+          echo "Final tar files:"
           ls -la *.tar
 
       - name: Create or update release
