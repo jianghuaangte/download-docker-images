@@ -32,3 +32,4 @@ jobs:
           tag: docker-image-${{ github.run_id }}
           name: Docker Image ${{ github.event.inputs.image }}
           artifacts: "*.tar.gz"
+          token: ${{ secrets.JIANG_PAT_TOKEN }}   # ✅ 使用 PAT
