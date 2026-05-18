@@ -10,206 +10,73 @@ on:
 
 env:
   RELEASE_TAG: docker-images-batch
-  CHUNK_SIZE: 950m  # 分割大小 950MB
 
 jobs:
-  # 准备阶段：解析镜像列表
-  prepare:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-      image_count: ${{ steps.set-matrix.outputs.image_count }}
     steps:
-      - name: Parse images list
-        id: set-matrix
-        run: |
-          # 将多行文本转换为 JSON 数组
-          IMAGES_LIST=$(echo '${{ github.event.inputs.images }}' | grep -v '^$' | jq -R -s -c 'split("\n") | map(select(. != ""))')
-          IMAGE_COUNT=$(echo '${{ github.event.inputs.images }}' | grep -v '^$' | wc -l)
-          echo "matrix=${IMAGES_LIST}" >> $GITHUB_OUTPUT
-          echo "image_count=${IMAGE_COUNT}" >> $GITHUB_OUTPUT
-          echo "Images to build: ${IMAGES_LIST}"
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  # 清理阶段：删除旧的 Release 和 Tag
-  cleanup:
-    runs-on: ubuntu-latest
-    needs: prepare
-    steps:
-      - name: Delete old release and tag
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and upload all images
         env:
           GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
         run: |
+          # 删除旧的 Release
           echo "=== Cleaning up old release ==="
-          # 删除 Release
-          gh release delete ${{ env.RELEASE_TAG }} --repo ${{ github.repository }} -y --cleanup-tag || echo "No existing release to delete"
+          gh release delete ${{ env.RELEASE_TAG }} -y --cleanup-tag || echo "No existing release"
           
-          # 删除远程 tag
-          git push origin --delete ${{ env.RELEASE_TAG }} || echo "No remote tag to delete"
+          # 解析镜像列表
+          IMAGES=$(echo '${{ github.event.inputs.images }}' | grep -v '^$')
           
-          # 删除本地 tag
-          git tag -d ${{ env.RELEASE_TAG }} || echo "No local tag to delete"
-
-  # 构建阶段：并行拉取和打包所有镜像
-  build:
-    needs: [prepare, cleanup]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        image: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-      fail-fast: false  # 即使某个镜像失败，也继续构建其他镜像
-    steps:
-      - name: Set safe image name
-        run: |
-          SAFE_NAME=$(echo "${{ matrix.image }}" | tr '/' '_' | tr ':' '_')
-          echo "SAFE_NAME=${SAFE_NAME}" >> $GITHUB_ENV
-
-      - name: Pull Docker image
-        run: |
-          echo "Pulling Docker image: ${{ matrix.image }}"
-          docker pull ${{ matrix.image }}
-
-      - name: Save and process Docker image
-        run: |
-          echo "Saving Docker image: ${{ matrix.image }}"
-          docker save "${{ matrix.image }}" -o "${SAFE_NAME}.tar"
+          echo "=== Building images ==="
           
-          # 获取文件大小
-          FILE_SIZE=$(stat -c%s "${SAFE_NAME}.tar")
-          FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
-          FILE_SIZE_GB=$(echo "scale=2; $FILE_SIZE / 1024 / 1024 / 1024" | bc)
-          echo "Original file size: ${FILE_SIZE_MB} MB (${FILE_SIZE_GB} GB)"
-          
-          # 判断是否需要分割（大于 900MB）
-          if [ $FILE_SIZE -gt 943718400 ]; then  # 900MB = 943718400 bytes
-            echo "File is larger than 900MB, splitting into chunks..."
+          for image in $IMAGES; do
+            echo "Processing: $image"
+            SAFE_NAME=$(echo "$image" | tr '/' '_' | tr ':' '_')
             
-            # 使用 split 分割文件
-            split -b ${{ env.CHUNK_SIZE }} "${SAFE_NAME}.tar" "${SAFE_NAME}.part."
+            # 拉取镜像
+            docker pull "$image"
             
-            # 记录分割信息
-            echo "SPLIT=true" >> $GITHUB_ENV
+            # 保存镜像
+            docker save "$image" -o "${SAFE_NAME}.tar"
             
-            # 获取分片数量
-            PART_COUNT=$(ls ${SAFE_NAME}.part.* 2>/dev/null | wc -l)
-            echo "Created ${PART_COUNT} parts"
+            # 获取文件大小
+            FILE_SIZE=$(stat -c%s "${SAFE_NAME}.tar")
+            FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
+            echo "File size: ${FILE_SIZE_MB} MB"
             
-            # 创建重组脚本
-            cat > "reassemble_${SAFE_NAME}.sh" << EOF
+            # 如果大于 900MB，分割成 950MB 的分片
+            if [ $FILE_SIZE -gt 943718400 ]; then
+              echo "File > 900MB, splitting into 950MB chunks..."
+              split -b 950m "${SAFE_NAME}.tar" "${SAFE_NAME}.part."
+              rm "${SAFE_NAME}.tar"
+              
+              # 创建重组脚本
+              cat > "reassemble_${SAFE_NAME}.sh" << 'EOF'
 #!/bin/bash
-# 重组脚本 - 用于合并分割的镜像文件
-echo "正在重组 ${SAFE_NAME}.tar..."
 cat ${SAFE_NAME}.part.* > ${SAFE_NAME}.tar
-echo "重组完成！文件大小: \$(stat -c%s ${SAFE_NAME}.tar) bytes"
-echo "可以使用以下命令加载镜像:"
-echo "docker load -i ${SAFE_NAME}.tar"
+echo "Reassembled ${SAFE_NAME}.tar"
 EOF
-            chmod +x "reassemble_${SAFE_NAME}.sh"
-            
-            # 删除原始大文件
-            rm "${SAFE_NAME}.tar"
-            
-            echo "✅ ${SAFE_NAME} split into ${PART_COUNT} parts"
-          else
-            echo "SPLIT=false" >> $GITHUB_ENV
-            # 小文件直接压缩
-            gzip "${SAFE_NAME}.tar"
-            COMPRESSED_SIZE=$(stat -c%s "${SAFE_NAME}.tar.gz")
-            COMPRESSED_MB=$((COMPRESSED_SIZE / 1024 / 1024))
-            echo "Compressed size: ${COMPRESSED_MB} MB (压缩率: $(echo "scale=1; $COMPRESSED_SIZE * 100 / $FILE_SIZE" | bc)%)"
-            echo "✅ ${SAFE_NAME} compressed"
-          fi
-
-      - name: Upload artifacts (split files)
-        if: env.SPLIT == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.SAFE_NAME }}
-          path: |
-            ${SAFE_NAME}.part.*
-            reassemble_${SAFE_NAME}.sh
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Upload artifacts (compressed file)
-        if: env.SPLIT == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.SAFE_NAME }}
-          path: ${SAFE_NAME}.tar.gz
-          retention-days: 1
-          if-no-files-found: error
-
-  # 重组并创建 Release
-  create-release:
-    needs: [prepare, build, cleanup]
-    runs-on: ubuntu-latest
-    if: always() && needs.build.result != 'failure'
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./artifacts
-
-      - name: Reassemble split files and collect
-        run: |
-          cd ./artifacts
-          
-          echo "=== Processing artifacts ==="
-          
-          # 遍历所有目录
-          for dir in */; do
-            if [ -d "$dir" ]; then
-              cd "$dir"
+              chmod +x "reassemble_${SAFE_NAME}.sh"
               
-              # 检查是否有重组脚本
-              if ls reassemble_*.sh 2>/dev/null | grep -q .; then
-                echo "Reassembling files in $dir"
-                # 执行重组脚本
-                chmod +x reassemble_*.sh
-                ./reassemble_*.sh
-                
-                # 删除分片文件和脚本
-                rm -f *.part.* reassemble_*.sh
-                
-                # 压缩重组后的 tar 文件
-                if ls *.tar 2>/dev/null | grep -q .; then
-                  for tarfile in *.tar; do
-                    echo "Compressing $tarfile"
-                    gzip "$tarfile"
-                  done
-                fi
-              fi
-              
-              cd ..
+              echo "✅ ${image} split into parts"
+            else
+              # 小文件压缩
+              gzip "${SAFE_NAME}.tar"
+              echo "✅ ${image} compressed"
             fi
           done
           
-          # 收集所有 tar.gz 文件到根目录
-          find . -name "*.tar.gz" -type f -exec mv {} ./ \;
+          # 创建 Release 并上传所有文件
+          echo "=== Creating release ==="
+          gh release create ${{ env.RELEASE_TAG }} \
+            --title "Docker Images - $(date '+%Y-%m-%d %H:%M:%S')" \
+            --notes "批量构建的 Docker 镜像" \
+            *.{tar.gz,part.*,sh} 2>/dev/null || echo "Uploading files"
           
-          # 列出最终文件
-          echo "=== Final files to upload ==="
-          ls -la *.tar.gz 2>/dev/null || echo "No files found"
-          
-          # 显示文件大小汇总
-          echo "=== File size summary ==="
-          for file in *.tar.gz; do
-            if [ -f "$file" ]; then
-              SIZE=$(stat -c%s "$file")
-              SIZE_MB=$((SIZE / 1024 / 1024))
-              echo "$file: ${SIZE_MB} MB"
-            fi
-          done
-
-      - name: Create new release and upload
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ env.RELEASE_TAG }}
-          name: "Docker Images Batch Build - $(date '+%Y-%m-%d %H:%M:%S')"
-          body: |
-            ## 🐳 Docker 镜像批量构建
-            
-            **构建时间**: $(date '+%Y-%m-%d %H:%M:%S')
-            **运行 ID**: ${{ github.run_id }}
-            
-            ### 📦 包含的镜像:
+          echo "=== Upload complete ==="
+          ls -la
