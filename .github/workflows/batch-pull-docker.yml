@@ -21,62 +21,51 @@ jobs:
       - name: Setup Docker
         uses: docker/setup-buildx-action@v2
 
-      - name: Build and upload all images
-        env:
-          GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
+      - name: Build images
         run: |
-          # 删除旧的 Release
-          echo "=== Cleaning up old release ==="
-          gh release delete ${{ env.RELEASE_TAG }} -y --cleanup-tag || echo "No existing release"
-          
-          # 解析镜像列表
           IMAGES=$(echo '${{ github.event.inputs.images }}' | grep -v '^$')
-          
-          echo "=== Building images ==="
           
           for image in $IMAGES; do
             echo "Processing: $image"
             SAFE_NAME=$(echo "$image" | tr '/' '_' | tr ':' '_')
             
-            # 拉取镜像
             docker pull "$image"
-            
-            # 保存镜像
             docker save "$image" -o "${SAFE_NAME}.tar"
             
-            # 获取文件大小
             FILE_SIZE=$(stat -c%s "${SAFE_NAME}.tar")
             FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
             echo "File size: ${FILE_SIZE_MB} MB"
             
-            # 如果大于 900MB，分割成 950MB 的分片
             if [ $FILE_SIZE -gt 943718400 ]; then
-              echo "File > 900MB, splitting into 950MB chunks..."
+              echo "Splitting large file..."
               split -b 950m "${SAFE_NAME}.tar" "${SAFE_NAME}.part."
               rm "${SAFE_NAME}.tar"
-              
-              # 创建重组脚本
-              cat > "reassemble_${SAFE_NAME}.sh" << 'EOF'
-#!/bin/bash
-cat ${SAFE_NAME}.part.* > ${SAFE_NAME}.tar
-echo "Reassembled ${SAFE_NAME}.tar"
-EOF
-              chmod +x "reassemble_${SAFE_NAME}.sh"
-              
-              echo "✅ ${image} split into parts"
             else
-              # 小文件压缩
               gzip "${SAFE_NAME}.tar"
-              echo "✅ ${image} compressed"
             fi
           done
           
-          # 创建 Release 并上传所有文件
-          echo "=== Creating release ==="
-          gh release create ${{ env.RELEASE_TAG }} \
-            --title "Docker Images - $(date '+%Y-%m-%d %H:%M:%S')" \
-            --notes "批量构建的 Docker 镜像" \
-            *.{tar.gz,part.*,sh} 2>/dev/null || echo "Uploading files"
-          
-          echo "=== Upload complete ==="
+          echo "Files generated:"
           ls -la
+
+      - name: Delete old release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          token: ${{ secrets.JIANG_PAT_TOKEN }}
+          allowUpdates: true
+          omitBody: true
+          removeArtifacts: true
+        continue-on-error: true
+
+      - name: Create new release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.RELEASE_TAG }}
+          name: "Docker Images Batch Build"
+          body: |
+            ## Docker 镜像批量构建
+            
+            **构建时间**: $(date '+%Y-%m-%d %H:%M:%S')
+            
+            ### 镜像列表:
