@@ -20,7 +20,7 @@ jobs:
       - name: Pull Docker image
         run: docker pull ${{ github.event.inputs.image }}
 
-      - name: Save image to tar.gz
+      - name: Save image as tar.gz
         run: |
           IMAGE_NAME=$(echo ${{ github.event.inputs.image }} | tr '/' '_' | tr ':' '_')
           docker save -o $IMAGE_NAME.tar ${{ github.event.inputs.image }}
