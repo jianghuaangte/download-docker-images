@@ -20,16 +20,16 @@ jobs:
       - name: Pull Docker image
         run: docker pull ${{ github.event.inputs.image }}
 
-      - name: Save image as tar.gz
+      - name: Save image as tar
         run: |
           IMAGE_NAME=$(echo ${{ github.event.inputs.image }} | tr '/' '_' | tr ':' '_')
           docker save -o $IMAGE_NAME.tar ${{ github.event.inputs.image }}
-          gzip $IMAGE_NAME.tar
+          echo "Saved Docker image as $IMAGE_NAME.tar"
 
-      - name: Upload tar.gz to Release
+      - name: Upload tar to Release
         uses: ncipollo/release-action@v1
         with:
           tag: docker-image-${{ github.run_id }}
           name: Docker Image ${{ github.event.inputs.image }}
-          artifacts: "*.tar.gz"
-          token: ${{ secrets.JIANG_PAT_TOKEN }}   # ✅ 使用 PAT
+          artifacts: "*.tar"
+          token: ${{ secrets.JIANG_PAT_TOKEN }}  # PAT
