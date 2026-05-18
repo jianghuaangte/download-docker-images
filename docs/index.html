@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-<title>Docker 镜像批量下载器 | 深浅色完全独立 | 文件检测</title>
+<title>Docker 镜像批量下载器 | 深浅色完美独立 | GitHub API 检测</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -176,7 +176,7 @@
         <i class="fab fa-docker text-3xl text-white"></i>
       </div>
       <h1 class="text-3xl font-bold tracking-tight light-text-primary dark-text-primary">批量镜像下载器</h1>
-      <p class="text-sm light-text-muted dark-text-muted">触发 Worker 生成镜像 · 检测 Release 文件 · 支持 GitHub 加速</p>
+      <p class="text-sm light-text-muted dark-text-muted">触发 GitHub Actions 生成镜像 · API 检测 Release 文件 · 支持 GitHub 加速</p>
     </div>
 
     <form id="dockerForm" class="flex flex-col gap-5">
@@ -186,7 +186,7 @@
           <span>镜像名称 (每行一个)</span>
           <span class="text-xs text-red-400 ml-1">*</span>
         </label>
-        <textarea id="imageList" placeholder="例如:&#10;linuxserver/obsidian:latest&#10;nginx:1.25&#10;mysql:8.0"
+        <textarea id="imageList" placeholder="例如:&#10;nginx:latest&#10;linuxserver/obsidian:latest&#10;mysql:8.0"
           class="w-full border rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition font-mono text-sm"
           rows="6" required></textarea>
         <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 支持格式: 镜像名[:tag] , 会自动将 / : 替换为 _</p>
@@ -235,7 +235,7 @@
     </form>
 
     <div class="border-t pt-3 text-center text-xs light-border dark-border light-text-light dark-text-light">
-      <i class="far fa-clock"></i> 触发后请点击「检测文件」确保镜像已构建完成再下载
+      <i class="far fa-clock"></i> 触发后 GitHub Actions 会自动构建，请稍后点击「检测文件」
     </div>
   </div>
 
@@ -296,6 +296,7 @@ themeToggle.addEventListener('click', () => {
 // ======================== 核心配置 ========================
 const WORKER_URL = 'https://download-docker-images.jianghangte.workers.dev';
 const RELEASE_TAG = 'docker-images';
+const GITHUB_API_RELEASES = `https://api.github.com/repos/jianghuaangte/download-docker-images/releases/tags/${RELEASE_TAG}`;
 const RELEASE_BASE_URL = `https://github.com/jianghuaangte/download-docker-images/releases/download/${RELEASE_TAG}/`;
 
 const form = document.getElementById('dockerForm');
@@ -326,16 +327,39 @@ function getAcceleratedDownloadUrl(image) {
   return `${mirror}/${originalUrl}`;
 }
 
-async function checkFileExists(url) {
+// 使用 GitHub API 检测指定 release (docker-images) 下是否存在该文件
+async function checkFileExistsViaAPI(imageName) {
+  const fileName = getTarFileName(imageName);
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const response = await fetch(url, { method: 'HEAD', signal: controller.signal, cache: 'no-store' });
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const response = await fetch(GITHUB_API_RELEASES, {
+      method: 'GET',
+      headers: { 'Accept': 'application/vnd.github.v3+json' },
+      signal: controller.signal,
+      cache: 'no-store'
+    });
     clearTimeout(timeoutId);
-    if (response.status === 200 || response.status === 302 || response.status === 304) return true;
-    if (response.status === 404) return false;
-    return response.ok;
+    
+    if (response.status === 404) {
+      // release 不存在
+      return false;
+    }
+    
+    if (!response.ok) {
+      console.warn('GitHub API 请求失败:', response.status);
+      return false;
+    }
+    
+    const release = await response.json();
+    // 检查 assets 中是否有匹配的文件名
+    if (release.assets && Array.isArray(release.assets)) {
+      const found = release.assets.some(asset => asset.name === fileName);
+      return found;
+    }
+    return false;
   } catch (err) {
+    console.error('GitHub API 检测失败:', err);
     return false;
   }
 }
@@ -419,7 +443,7 @@ function updateTriggerStatus(imageName, success, message = '') {
   if (success) {
     statusBadge.innerText = "✅ 已触发";
     statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-green dark-badge-green";
-    infoMsg.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> 任务已提交，请稍后点击「检测文件」确认构建完成。';
+    infoMsg.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> GitHub Actions 已触发，请稍后点击「检测文件」确认构建完成。';
     infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
     checkBtn.disabled = false;
   } else {
@@ -437,13 +461,14 @@ async function performCheck(imageName) {
   const record = statusRowsMap.get(imageName);
   if (!record) return;
   const { checkBtn, downloadBtn, copyBtn, infoMsg, statusBadge } = record;
-  const originalUrl = getOriginalDownloadUrl(imageName);
   checkBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 检测中';
   checkBtn.disabled = true;
-  infoMsg.innerHTML = '<i class="fas fa-hourglass-half"></i> 正在检测 GitHub Release 文件...';
+  infoMsg.innerHTML = '<i class="fas fa-hourglass-half"></i> 正在通过 GitHub API 检测 release 文件...';
   
   try {
-    const exists = await checkFileExists(originalUrl);
+    // 使用 GitHub API 检测
+    const exists = await checkFileExistsViaAPI(imageName);
+    
     if (exists) {
       const finalDownloadUrl = getAcceleratedDownloadUrl(imageName);
       downloadBtn.href = finalDownloadUrl;
@@ -459,14 +484,14 @@ async function performCheck(imageName) {
         copyToClipboard(urlToCopy, copyBtn);
       };
       
-      infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！加速地址已生效，可下载。`;
+      infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！GitHub Actions 已完成构建。`;
       infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
       statusBadge.innerText = "✅ 可下载";
       statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-emerald dark-badge-emerald";
     } else {
-      infoMsg.innerHTML = `<i class="fas fa-times-circle text-amber-500"></i> 文件尚未在 Releases 中找到，请等待 Worker 构建完成。`;
+      infoMsg.innerHTML = `<i class="fas fa-clock text-amber-500"></i> 文件尚未在 Releases 中找到，请等待 GitHub Actions 执行完成。`;
       infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
-      statusBadge.innerText = "⏳ 等待构建";
+      statusBadge.innerText = "⏳ 等待 Actions";
       statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
       downloadBtn.style.pointerEvents = "none";
       downloadBtn.className = "download-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed light-bg-gray dark-bg-gray light-text-light dark-text-light";
@@ -498,7 +523,7 @@ async function triggerImage(image, apiKey) {
   const { statusBadge, infoMsg, checkBtn } = record;
   statusBadge.innerText = "⏳ 触发中...";
   statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
-  infoMsg.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 正在请求 Worker ...';
+  infoMsg.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 正在请求 Worker 触发 GitHub Actions ...';
   checkBtn.disabled = true;
   try {
     const res = await fetch(WORKER_URL, {
@@ -510,7 +535,8 @@ async function triggerImage(image, apiKey) {
     try { data = await res.json(); } catch(e){ data = { success: false, message: await res.text() }; }
     if (data?.success) {
       updateTriggerStatus(image, true);
-      setTimeout(() => { if(statusRowsMap.has(image)) performCheck(image); }, 2000);
+      // 触发后延迟 3 秒自动检测一次，让 Actions 有时间启动
+      setTimeout(() => { if(statusRowsMap.has(image)) performCheck(image); }, 3000);
     } else {
       updateTriggerStatus(image, false, data?.message || 'Worker 返回失败');
     }
