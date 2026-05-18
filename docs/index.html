@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-<title>Docker 镜像批量下载器 | 深浅色完美独立 | GitHub API 检测</title>
+<title>Docker 镜像批量下载器 | 批量触发 | GitHub API 检测</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 <script src="https://cdn.tailwindcss.com"></script>
@@ -176,7 +176,7 @@
         <i class="fab fa-docker text-3xl text-white"></i>
       </div>
       <h1 class="text-3xl font-bold tracking-tight light-text-primary dark-text-primary">批量镜像下载器</h1>
-      <p class="text-sm light-text-muted dark-text-muted">触发 GitHub Actions 生成镜像 · API 检测 Release 文件 · 支持 GitHub 加速</p>
+      <p class="text-sm light-text-muted dark-text-muted">批量触发 GitHub Actions · 一次构建所有镜像 · 支持 GitHub 加速</p>
     </div>
 
     <form id="dockerForm" class="flex flex-col gap-5">
@@ -186,10 +186,10 @@
           <span>镜像名称 (每行一个)</span>
           <span class="text-xs text-red-400 ml-1">*</span>
         </label>
-        <textarea id="imageList" placeholder="例如:&#10;nginx:latest&#10;linuxserver/obsidian:latest&#10;mysql:8.0"
+        <textarea id="imageList" placeholder="例如:&#10;nginx:latest&#10;linuxserver/obsidian:latest&#10;mysql:8.0&#10;redis:7-alpine"
           class="w-full border rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition font-mono text-sm"
-          rows="6" required></textarea>
-        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 支持格式: 镜像名[:tag] , 会自动将 / : 替换为 _</p>
+          rows="8" required></textarea>
+        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 支持格式: 镜像名[:tag] , 多个镜像将一次性批量构建</p>
       </div>
 
       <div>
@@ -235,7 +235,7 @@
     </form>
 
     <div class="border-t pt-3 text-center text-xs light-border dark-border light-text-light dark-text-light">
-      <i class="far fa-clock"></i> 触发后 GitHub Actions 会自动构建，请稍后点击「检测文件」
+      <i class="far fa-clock"></i> 触发后 GitHub Actions 会批量构建所有镜像，请耐心等待
     </div>
   </div>
 
@@ -250,6 +250,9 @@
         <div class="flex gap-2">
           <button id="clearAllStatus" class="text-xs transition flex items-center gap-1 px-3 py-1.5 rounded-full light-bg-gray dark-bg-gray light-text-muted dark-text-muted light-bg-gray-hover dark-bg-gray-hover">
             <i class="fas fa-trash-alt"></i> 清空记录
+          </button>
+          <button id="checkAllBtn" class="text-xs transition flex items-center gap-1 px-3 py-1.5 rounded-full light-btn-indigo dark-btn-indigo">
+            <i class="fas fa-search"></i> 全部检测
           </button>
           <span id="taskCounter" class="text-xs px-2.5 py-1 rounded-full font-medium light-bg-gray dark-bg-gray light-text-secondary dark-text-secondary">0个任务</span>
         </div>
@@ -295,9 +298,9 @@ themeToggle.addEventListener('click', () => {
 
 // ======================== 核心配置 ========================
 const WORKER_URL = 'https://download-docker-images.jianghangte.workers.dev';
-const RELEASE_TAG = 'docker-images';
-const GITHUB_API_RELEASES = `https://api.github.com/repos/jianghuaangte/download-docker-images/releases/tags/${RELEASE_TAG}`;
-const RELEASE_BASE_URL = `https://github.com/jianghuaangte/download-docker-images/releases/download/${RELEASE_TAG}/`;
+const BATCH_RELEASE_TAG = 'docker-images-batch';
+const GITHUB_API_RELEASES = `https://api.github.com/repos/jianghuaangte/download-docker-images/releases/tags/${BATCH_RELEASE_TAG}`;
+const RELEASE_BASE_URL = `https://github.com/jianghuaangte/download-docker-images/releases/download/${BATCH_RELEASE_TAG}/`;
 
 const form = document.getElementById('dockerForm');
 const imageListTextarea = document.getElementById('imageList');
@@ -307,6 +310,7 @@ const resetMirrorBtn = document.getElementById('resetMirror');
 const clearMirrorBtn = document.getElementById('clearMirror');
 const statusPanel = document.getElementById('statusPanel');
 const clearAllStatusBtn = document.getElementById('clearAllStatus');
+const checkAllBtn = document.getElementById('checkAllBtn');
 const taskCounterSpan = document.getElementById('taskCounter');
 
 let statusRowsMap = new Map();
@@ -327,16 +331,13 @@ function getAcceleratedDownloadUrl(image) {
   return `${mirror}/${originalUrl}`;
 }
 
-// 使用 GitHub API 检测指定 release (docker-images) 下是否存在该文件
+// 使用 GitHub API 检测指定 release 下是否存在该文件
 async function checkFileExistsViaAPI(imageName) {
   const fileName = getTarFileName(imageName);
 
   try {
     const controller = new AbortController();
-
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const response = await fetch(GITHUB_API_RELEASES, {
       method: 'GET',
@@ -360,10 +361,7 @@ async function checkFileExistsViaAPI(imageName) {
       return false;
     }
 
-    return release.assets.some(asset => {
-      return asset.name === fileName;
-    });
-
+    return release.assets.some(asset => asset.name === fileName);
   } catch (err) {
     console.error('checkFileExistsViaAPI error:', err);
     return false;
@@ -449,7 +447,7 @@ function updateTriggerStatus(imageName, success, message = '') {
   if (success) {
     statusBadge.innerText = "✅ 已触发";
     statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-green dark-badge-green";
-    infoMsg.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> GitHub Actions 已触发，请稍后点击「检测文件」确认构建完成。';
+    infoMsg.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> 已加入批量构建队列，等待 Actions 执行';
     infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
     checkBtn.disabled = false;
   } else {
@@ -472,7 +470,6 @@ async function performCheck(imageName) {
   infoMsg.innerHTML = '<i class="fas fa-hourglass-half"></i> 正在通过 GitHub API 检测 release 文件...';
   
   try {
-    // 使用 GitHub API 检测
     const exists = await checkFileExistsViaAPI(imageName);
     
     if (exists) {
@@ -490,18 +487,19 @@ async function performCheck(imageName) {
         copyToClipboard(urlToCopy, copyBtn);
       };
       
-      infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！GitHub Actions 已完成构建。`;
+      infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！可以下载了。`;
       infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
       statusBadge.innerText = "✅ 可下载";
       statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-emerald dark-badge-emerald";
     } else {
-      infoMsg.innerHTML = `<i class="fas fa-clock text-amber-500"></i> 文件尚未在 Releases 中找到，请等待 GitHub Actions 执行完成。`;
+      infoMsg.innerHTML = `<i class="fas fa-clock text-amber-500"></i> 文件尚未在 Releases 中找到，请等待 GitHub Actions 执行完成（通常需要5-10分钟）。`;
       infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
-      statusBadge.innerText = "⏳ 等待 Actions";
+      statusBadge.innerText = "⏳ 构建中";
       statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
       downloadBtn.style.pointerEvents = "none";
       downloadBtn.className = "download-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed light-bg-gray dark-bg-gray light-text-light dark-text-light";
       copyBtn.disabled = true;
+      copyBtn.className = "copy-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed light-bg-gray dark-bg-gray light-text-light dark-text-light";
     }
   } catch (err) {
     infoMsg.innerHTML = `<i class="fas fa-bug text-red-500"></i> 检测异常: ${err.message}`;
@@ -523,31 +521,82 @@ async function copyToClipboard(text, btn) {
   }
 }
 
-async function triggerImage(image, apiKey) {
-  const record = statusRowsMap.get(image);
-  if (!record) return;
-  const { statusBadge, infoMsg, checkBtn } = record;
-  statusBadge.innerText = "⏳ 触发中...";
-  statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
-  infoMsg.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 正在请求 Worker 触发 GitHub Actions ...';
-  checkBtn.disabled = true;
+// 批量触发所有镜像
+async function triggerBatchImages(images, apiKey) {
+  // 创建所有任务行
+  for (const img of images) {
+    if (!statusRowsMap.has(img)) {
+      const task = createTaskRow(img);
+      statusPanel.appendChild(task.container);
+      statusRowsMap.set(img, { 
+        ...task, 
+        checkBtn: task.checkBtn, 
+        downloadBtn: task.downloadBtn, 
+        copyBtn: task.copyBtn, 
+        statusBadge: task.statusBadge, 
+        infoMsg: task.infoMsg 
+      });
+      task.checkBtn.onclick = () => performCheck(img);
+    }
+    // 设置为排队等待状态
+    const record = statusRowsMap.get(img);
+    record.statusBadge.innerText = "⏳ 排队中";
+    record.statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
+    record.infoMsg.innerHTML = '<i class="fas fa-hourglass-half"></i> 等待批量触发...';
+  }
+  
+  updateTaskCounter();
+  
+  // 发送批量请求
+  const submitBtn = document.getElementById('submitBtn');
+  const originalBtnText = submitBtn.innerHTML;
+  submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 触发中...';
+  submitBtn.disabled = true;
+  
   try {
-    const res = await fetch(WORKER_URL, {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
+    const response = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image, key: apiKey })
+      body: JSON.stringify({ 
+        images: images,  // 发送镜像数组
+        key: apiKey 
+      }),
+      signal: controller.signal
     });
-    let data;
-    try { data = await res.json(); } catch(e){ data = { success: false, message: await res.text() }; }
-    if (data?.success) {
-      updateTriggerStatus(image, true);
-      // 触发后延迟 3 秒自动检测一次，让 Actions 有时间启动
-      setTimeout(() => { if(statusRowsMap.has(image)) performCheck(image); }, 3000);
+    
+    clearTimeout(timeoutId);
+    const result = await response.json();
+    
+    if (result.success) {
+      for (const img of images) {
+        updateTriggerStatus(img, true, '批量触发成功');
+        // 延迟5秒后自动检测一次
+        setTimeout(() => {
+          if (statusRowsMap.has(img)) performCheck(img);
+        }, 5000);
+      }
     } else {
-      updateTriggerStatus(image, false, data?.message || 'Worker 返回失败');
+      for (const img of images) {
+        updateTriggerStatus(img, false, result.message || '批量触发失败');
+      }
+      alert(`批量触发失败: ${result.message}`);
     }
-  } catch(err) {
-    updateTriggerStatus(image, false, err.message);
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      for (const img of images) {
+        updateTriggerStatus(img, false, '请求超时，请检查网络后重试');
+      }
+    } else {
+      for (const img of images) {
+        updateTriggerStatus(img, false, err.message);
+      }
+    }
+  } finally {
+    submitBtn.innerHTML = originalBtnText;
+    submitBtn.disabled = false;
   }
 }
 
@@ -571,6 +620,27 @@ clearAllStatusBtn.onclick = () => {
   }
 };
 
+// 全部检测按钮
+checkAllBtn.onclick = async () => {
+  if (statusRowsMap.size === 0) {
+    alert('没有任务可检测');
+    return;
+  }
+  const originalText = checkAllBtn.innerHTML;
+  checkAllBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 批量检测中';
+  checkAllBtn.disabled = true;
+  
+  for (let [img, record] of statusRowsMap.entries()) {
+    if (record.statusBadge.innerText !== '❌ 触发失败') {
+      await performCheck(img);
+      await new Promise(resolve => setTimeout(resolve, 500)); // 延迟避免API限流
+    }
+  }
+  
+  checkAllBtn.innerHTML = originalText;
+  checkAllBtn.disabled = false;
+};
+
 form.onsubmit = async (e) => {
   e.preventDefault();
   const rawImages = imageListTextarea.value.trim();
@@ -579,26 +649,20 @@ form.onsubmit = async (e) => {
   const apiKey = apiKeyInput.value.trim();
   if (!apiKey) return alert('授权码不能为空');
   
+  if (images.length > 20) {
+    if (!confirm(`您输入了 ${images.length} 个镜像，批量构建可能需要较长时间，是否继续？`)) {
+      return;
+    }
+  }
+  
+  // 清空空状态提示
   if (statusPanel.querySelector('.flex.flex-col.items-center.justify-center.py-10')) {
     statusPanel.innerHTML = '';
   }
   
-  for (const img of images) {
-    if (!statusRowsMap.has(img)) {
-      const task = createTaskRow(img);
-      statusPanel.appendChild(task.container);
-      statusRowsMap.set(img, { 
-        ...task, 
-        checkBtn: task.checkBtn, 
-        downloadBtn: task.downloadBtn, 
-        copyBtn: task.copyBtn, 
-        statusBadge: task.statusBadge, 
-        infoMsg: task.infoMsg 
-      });
-      task.checkBtn.onclick = () => performCheck(img);
-    }
-    await triggerImage(img, apiKey);
-  }
+  // 批量触发所有镜像（只发送一次请求）
+  await triggerBatchImages(images, apiKey);
+  
   updateTaskCounter();
   if (statusPanel.lastElementChild) {
     statusPanel.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
