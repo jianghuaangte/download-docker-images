@@ -26,10 +26,12 @@ jobs:
           docker save -o $IMAGE_NAME.tar ${{ github.event.inputs.image }}
           echo "Saved Docker image as $IMAGE_NAME.tar"
 
-      - name: Upload tar to Release
+      - name: Upload tar to fixed release
         uses: ncipollo/release-action@v1
         with:
-          tag: docker-image-${{ github.run_id }}
+          tag: docker-images                     # ✅ 固定 tag
           name: Docker Image ${{ github.event.inputs.image }}
-          artifacts: "*.tar"
-          token: ${{ secrets.JIANG_PAT_TOKEN }}  # PAT
+          artifacts: "*.tar"                     # ✅ 上传 .tar 文件
+          token: ${{ secrets.JIANG_PAT_TOKEN }} # PAT
+          replacesArtifacts: true                # ✅ 覆盖旧的 artifacts
+          skipIfReleaseExists: false             # 强制更新
