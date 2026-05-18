@@ -49,25 +49,29 @@ jobs:
           ls -la
 
       - name: Delete old release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: ${{ env.RELEASE_TAG }}
-          token: ${{ secrets.JIANG_PAT_TOKEN }}
-          allowUpdates: true
-          omitBody: true
-          removeArtifacts: true
-        continue-on-error: true
+        run: |
+          gh release delete ${{ env.RELEASE_TAG }} -y --repo ${{ github.repository }} || echo "No existing release"
+          git push origin --delete ${{ env.RELEASE_TAG }} || echo "No remote tag"
+        env:
+          GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
 
-      - name: Create new release and upload
-        uses: ncipollo/release-action@v1
-        with:
-        
-          tag: ${{ env.RELEASE_TAG }}
-          name: "Docker Images Batch Build"
-          token: ${{ secrets.JIANG_PAT_TOKEN }}
-          body: |
-            ## Docker 镜像批量构建
-            
-            **构建时间**: $(date '+%Y-%m-%d %H:%M:%S')
-            
-            ### 镜像列表:
+      - name: Create new release
+        run: |
+          gh release create ${{ env.RELEASE_TAG }} \
+            --title "Docker Images Batch Build - $(date '+%Y-%m-%d %H:%M:%S')" \
+            --notes "镜像列表:\n${{ github.event.inputs.images }}" \
+            --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
+
+      - name: Upload artifacts
+        run: |
+          for file in *.tar.gz *.part.*; do
+            if [ -f "$file" ]; then
+              gh release upload ${{ env.RELEASE_TAG }} "$file" \
+                --repo ${{ github.repository }} \
+                --clobber
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
