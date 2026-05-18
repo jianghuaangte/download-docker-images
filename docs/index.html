@@ -3,67 +3,94 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-<title>Docker 镜像批量下载器 | 深色/浅色模式 | 文件检测</title>
+<title>Docker 镜像批量下载器 | 深浅色完全独立 | 文件检测</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 <script src="https://cdn.tailwindcss.com"></script>
-<!-- 深色模式自定义覆盖样式 -->
 <style>
   * { font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
   
-  /* 基础过渡 */
-  body, .glass-card, .task-item, button, a, .bg-white, .bg-gray-50, .border-gray-200, .border-gray-300 {
-    transition: background-color 0.25s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  /* 全局过渡 */
+  body, .glass-card, .task-item, button, a, input, textarea, .status-badge, .check-btn, .download-btn, .copy-btn, .panel-header {
+    transition: all 0.2s ease;
   }
   
-  /* 浅色模式默认 (light) */
-  :root {
-    --bg-gradient-start: #f0f9ff;
-    --bg-gradient-end: #e6f0fa;
-    --card-bg: rgba(255,255,255,0.96);
-    --card-border: rgba(255,255,255,0.3);
-    --text-primary: #1e293b;
-    --text-secondary: #475569;
-    --border-light: #e2e8f0;
-    --input-bg: #f9fafb;
-    --badge-gray-bg: #f1f5f9;
-    --badge-gray-text: #334155;
-    --icon-docker: #10b981;
-  }
-  
+  /* ========= 浅色模式（默认，清新优雅） ========= */
   body {
-    background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+    background: linear-gradient(135deg, #f0f9ff 0%, #e6f0fa 100%);
     background-attachment: fixed;
   }
   
-  /* 深色模式 */
+  .glass-card {
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 20px 35px -12px rgba(0, 0, 0, 0.08);
+  }
+  
+  .task-item {
+    border-left: 3px solid #10b981;
+    background: white;
+    border-radius: 0.75rem;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    padding: 0.75rem;
+  }
+  .task-item:hover {
+    background-color: #f9fafb;
+    transform: translateX(2px);
+  }
+  
+  .scrollbar-custom::-webkit-scrollbar { width: 6px; }
+  .scrollbar-custom::-webkit-scrollbar-track { background: #e2e8f0; border-radius: 8px; }
+  .scrollbar-custom::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+  
+  /* 浅色模式面板头部 */
+  .panel-header {
+    background: rgba(255, 255, 255, 0.5);
+    border-bottom: 1px solid #e5e7eb;
+  }
+  
+  /* 浅色模式文字颜色 */
+  .light-text-primary { color: #1f2937; }
+  .light-text-secondary { color: #374151; }
+  .light-text-muted { color: #6b7280; }
+  .light-text-light { color: #9ca3af; }
+  .light-border { border-color: #e5e7eb; }
+  .light-bg-gray { background-color: #f3f4f6; }
+  .light-bg-gray-hover:hover { background-color: #e5e7eb; }
+  .light-badge-gray { background-color: #f3f4f6; color: #4b5563; }
+  .light-badge-green { background-color: #d1fae5; color: #047857; }
+  .light-badge-red { background-color: #fee2e2; color: #b91c1c; }
+  .light-badge-amber { background-color: #fef3c7; color: #b45309; }
+  .light-badge-emerald { background-color: #d1fae5; color: #047857; }
+  .light-btn-indigo { background-color: #eef2ff; color: #4338ca; }
+  .light-btn-indigo:hover { background-color: #e0e7ff; }
+  .light-btn-download { background-color: #d1fae5; color: #047857; }
+  .light-btn-download:hover { background-color: #a7f3d0; }
+  .light-btn-copy { background-color: #f3f4f6; color: #374151; }
+  .light-btn-copy:hover { background-color: #e5e7eb; }
+  
+  /* ========= 深色模式（独立配色） ========= */
   body.dark {
-    --bg-gradient-start: #0f172a;
-    --bg-gradient-end: #1e293b;
-    --card-bg: rgba(30, 41, 59, 0.95);
-    --card-border: rgba(71, 85, 105, 0.5);
-    --text-primary: #f1f5f9;
-    --text-secondary: #cbd5e1;
-    --border-light: #334155;
-    --input-bg: #1e293b;
-    --badge-gray-bg: #334155;
-    --badge-gray-text: #cbd5e6;
-    --icon-docker: #34d399;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    background-attachment: fixed;
   }
   
   body.dark .glass-card {
-    background: var(--card-bg);
-    border-color: var(--card-border);
+    background: rgba(30, 41, 59, 0.96);
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    box-shadow: 0 20px 35px -12px rgba(0, 0, 0, 0.3);
   }
   
   body.dark .task-item {
     background-color: #1e293b;
     border-color: #334155;
+    border-left-color: #34d399;
     box-shadow: 0 1px 2px rgba(0,0,0,0.3);
   }
-  
   body.dark .task-item:hover {
     background-color: #2d3a4e;
+    transform: translateX(2px);
   }
   
   body.dark input, body.dark textarea {
@@ -71,179 +98,134 @@
     border-color: #475569;
     color: #e2e8f0;
   }
-  
   body.dark input:focus, body.dark textarea:focus {
     border-color: #10b981;
-    ring-color: #10b981;
+    outline: none;
   }
   
-  body.dark .border-gray-200, body.dark .border-gray-300 {
-    border-color: #334155;
+  body.dark .scrollbar-custom::-webkit-scrollbar-track { background: #1e293b; }
+  body.dark .scrollbar-custom::-webkit-scrollbar-thumb { background: #475569; }
+  
+  /* 深色模式面板头部 - 独立配色 */
+  body.dark .panel-header {
+    background: rgba(30, 41, 59, 0.8);
+    border-bottom: 1px solid #334155;
   }
   
-  body.dark .bg-gray-50, body.dark .bg-gray-100 {
-    background-color: #1e293b;
-  }
+  /* 深色模式文字颜色 */
+  body.dark .dark-text-primary { color: #f1f5f9; }
+  body.dark .dark-text-secondary { color: #e2e8f0; }
+  body.dark .dark-text-muted { color: #94a3b8; }
+  body.dark .dark-text-light { color: #64748b; }
+  body.dark .dark-border { border-color: #334155; }
+  body.dark .dark-bg-gray { background-color: #334155; }
+  body.dark .dark-bg-gray-hover:hover { background-color: #475569; }
+  body.dark .dark-badge-gray { background-color: #334155; color: #cbd5e1; }
+  body.dark .dark-badge-green { background-color: #065f46; color: #6ee7b7; }
+  body.dark .dark-badge-red { background-color: #7f1d1d; color: #fca5a5; }
+  body.dark .dark-badge-amber { background-color: #78350f; color: #fcd34d; }
+  body.dark .dark-badge-emerald { background-color: #065f46; color: #6ee7b7; }
+  body.dark .dark-btn-indigo { background-color: #312e81; color: #a5b4fc; }
+  body.dark .dark-btn-indigo:hover { background-color: #4338ca; }
+  body.dark .dark-btn-download { background-color: #065f46; color: #6ee7b7; }
+  body.dark .dark-btn-download:hover { background-color: #047857; }
+  body.dark .dark-btn-copy { background-color: #334155; color: #cbd5e1; }
+  body.dark .dark-btn-copy:hover { background-color: #475569; }
   
-  body.dark .text-gray-500, body.dark .text-gray-400, body.dark .text-gray-600 {
-    color: #94a3b8;
-  }
-  
-  body.dark .text-gray-700, body.dark .text-gray-800 {
-    color: #e2e8f0;
-  }
-  
-  body.dark .bg-white\/90, body.dark .bg-white\/95, body.dark .bg-white {
-    background-color: #1e293b !important;
-  }
-  
-  body.dark .bg-emerald-50 {
-    background-color: #064e3b;
-  }
-  
-  body.dark .bg-indigo-50 {
-    background-color: #1e1b4b;
-  }
-  
-  body.dark button.bg-gray-100 {
-    background-color: #334155;
-    color: #cbd5e1;
-  }
-  
-  body.dark button.bg-gray-100:hover {
-    background-color: #475569;
-  }
-  
-  body.dark .status-badge.bg-gray-100 {
-    background-color: #334155;
-    color: #cbd5e1;
-  }
-  
-  body.dark .copy-btn.bg-gray-100 {
-    background-color: #334155;
-    color: #cbd5e1;
-  }
-  
-  body.dark .check-btn.bg-indigo-50 {
-    background-color: #312e81;
-    color: #a5b4fc;
-  }
-  
-  body.dark .download-btn.bg-emerald-100 {
-    background-color: #065f46;
-    color: #6ee7b7;
-  }
-  
-  .glass-card {
-    background: var(--card-bg);
-    backdrop-filter: blur(0px);
-    border: 1px solid var(--card-border);
-  }
-  
-  .scrollbar-custom::-webkit-scrollbar {
-    width: 6px;
-  }
-  .scrollbar-custom::-webkit-scrollbar-track {
-    background: #e2e8f0;
-    border-radius: 8px;
-  }
-  .scrollbar-custom::-webkit-scrollbar-thumb {
-    background: #94a3b8;
-    border-radius: 8px;
-  }
-  body.dark .scrollbar-custom::-webkit-scrollbar-track {
-    background: #1e293b;
-  }
-  body.dark .scrollbar-custom::-webkit-scrollbar-thumb {
-    background: #475569;
-  }
-  
-  .btn-hover-scale {
-    transition: transform 0.1s ease;
-  }
-  .btn-hover-scale:active {
-    transform: scale(0.97);
-  }
-  .theme-toggle {
+  /* 主题切换按钮 */
+  .theme-toggle-btn {
     cursor: pointer;
     transition: all 0.2s;
+    backdrop-filter: blur(8px);
+    padding: 0.75rem;
+    border-radius: 9999px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   }
-  .theme-toggle:hover {
-    transform: scale(1.05);
+  .theme-toggle-btn:hover { transform: scale(1.05); }
+  
+  body .theme-toggle-btn {
+    background: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(203, 213, 225, 0.6);
+    color: #334155;
   }
+  body.dark .theme-toggle-btn {
+    background: rgba(30, 41, 59, 0.9);
+    border: 1px solid #475569;
+    color: #f1f5f9;
+  }
+  body.dark .theme-toggle-btn:hover { background: #334155; }
+  
+  .btn-hover-scale:active { transform: scale(0.97); }
 </style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-5 relative">
 
-<!-- 顶部右侧主题切换按钮 -->
+<!-- 主题切换按钮 -->
 <div class="fixed top-5 right-5 z-50">
-  <button id="themeToggle" class="theme-toggle bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm p-3 rounded-full shadow-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:shadow-xl transition-all">
+  <button id="themeToggle" class="theme-toggle-btn">
     <i id="themeIcon" class="fas fa-moon text-xl"></i>
   </button>
 </div>
 
 <div class="max-w-6xl w-full mx-auto grid grid-cols-1 lg:grid-cols-2 gap-7">
 
-  <!-- 左侧：下载表单 -->
-  <div class="glass-card rounded-2xl shadow-2xl p-7 flex flex-col gap-6 transition-all">
+  <!-- 左侧表单 -->
+  <div class="glass-card rounded-2xl shadow-xl p-7 flex flex-col gap-6">
     <div class="text-center space-y-2">
       <div class="inline-flex items-center justify-center bg-gradient-to-br from-emerald-500 to-teal-600 p-2.5 rounded-2xl shadow-md">
         <i class="fab fa-docker text-3xl text-white"></i>
       </div>
-      <h1 class="text-3xl font-bold tracking-tight text-gray-800 dark:text-gray-100">批量镜像下载器</h1>
-      <p class="text-gray-500 dark:text-gray-400 text-sm">触发 Worker 生成镜像 · 检测 Release 文件 · 支持 GitHub 加速</p>
+      <h1 class="text-3xl font-bold tracking-tight light-text-primary dark-text-primary">批量镜像下载器</h1>
+      <p class="text-sm light-text-muted dark-text-muted">触发 Worker 生成镜像 · 检测 Release 文件 · 支持 GitHub 加速</p>
     </div>
 
     <form id="dockerForm" class="flex flex-col gap-5">
-      <!-- 镜像列表 -->
       <div>
-        <label class="block font-semibold text-gray-700 dark:text-gray-200 mb-1.5 flex items-center gap-2">
-          <i class="fas fa-list-ul text-emerald-600 dark:text-emerald-400 text-sm"></i>
+        <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
+          <i class="fas fa-list-ul text-emerald-600 text-sm"></i>
           <span>镜像名称 (每行一个)</span>
           <span class="text-xs text-red-400 ml-1">*</span>
         </label>
         <textarea id="imageList" placeholder="例如:&#10;linuxserver/obsidian:latest&#10;nginx:1.25&#10;mysql:8.0"
-          class="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition bg-gray-50 dark:bg-gray-800 dark:text-gray-100 font-mono text-sm"
+          class="w-full border rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition font-mono text-sm"
           rows="6" required></textarea>
-        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1"><i class="fas fa-info-circle"></i> 支持格式: 镜像名[:tag] , 会自动将 / : 替换为 _</p>
+        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 支持格式: 镜像名[:tag] , 会自动将 / : 替换为 _</p>
       </div>
 
-      <!-- 授权码 -->
       <div>
-        <label class="block font-semibold text-gray-700 dark:text-gray-200 mb-1.5 flex items-center gap-2">
-          <i class="fas fa-key text-amber-600 dark:text-amber-400 text-sm"></i>
+        <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
+          <i class="fas fa-key text-amber-600 text-sm"></i>
           <span>授权码</span>
           <span class="text-xs text-red-400 ml-1">*</span>
         </label>
         <div class="relative">
           <input type="password" id="apiKey" placeholder="请输入授权码"
-            class="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition bg-gray-50 dark:bg-gray-800 dark:text-gray-100"
+            class="w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400 transition"
             required>
-          <i class="fas fa-lock absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-sm"></i>
+          <i class="fas fa-lock absolute right-4 top-1/2 -translate-y-1/2 light-text-light dark-text-light text-sm"></i>
         </div>
       </div>
 
-      <!-- GitHub 加速地址 -->
       <div>
-        <label class="block font-semibold text-gray-700 dark:text-gray-200 mb-1.5 flex items-center gap-2">
-          <i class="fas fa-tachometer-alt text-blue-500 dark:text-blue-400 text-sm"></i>
+        <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
+          <i class="fas fa-tachometer-alt text-blue-500 text-sm"></i>
           <span>GitHub 加速地址</span>
-          <span class="text-xs text-gray-500 dark:text-gray-400">用于拼接下载链接</span>
+          <span class="text-xs light-text-light dark-text-light">用于拼接下载链接</span>
         </label>
         <div class="flex items-center gap-2">
           <div class="relative flex-1">
             <input type="text" id="mirrorPrefix" value="https://ghfast.top" placeholder="例如: https://ghfast.top"
-              class="w-full border border-gray-300 dark:border-gray-600 rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 transition bg-gray-50 dark:bg-gray-800 dark:text-gray-100">
-            <i class="fas fa-globe absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 dark:text-gray-500 text-sm"></i>
+              class="w-full border rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 transition">
+            <i class="fas fa-globe absolute right-4 top-1/2 -translate-y-1/2 light-text-light dark-text-light text-sm"></i>
           </div>
-          <button type="button" id="resetMirror" class="px-3 py-2 bg-emerald-50 dark:bg-emerald-900/40 hover:bg-emerald-100 dark:hover:bg-emerald-800 rounded-xl transition text-emerald-700 dark:text-emerald-300 text-sm font-medium">
+          <button type="button" id="resetMirror" class="px-3 py-2 rounded-xl transition text-sm font-medium light-bg-gray dark-bg-gray light-text-secondary dark-text-secondary light-bg-gray-hover dark-bg-gray-hover">
             <i class="fas fa-undo-alt"></i>
           </button>
-          <button type="button" id="clearMirror" class="px-3 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-xl transition text-gray-600 dark:text-gray-300">
+          <button type="button" id="clearMirror" class="px-3 py-2 rounded-xl transition light-bg-gray dark-bg-gray light-text-secondary dark-text-secondary light-bg-gray-hover dark-bg-gray-hover">
             <i class="fas fa-times-circle"></i>
           </button>
         </div>
-        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1"><i class="fas fa-link"></i> 最终下载地址 = 加速地址 + 原始GitHub地址</p>
+        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-link"></i> 最终下载地址 = 加速地址 + 原始GitHub地址</p>
       </div>
 
       <button type="submit" id="submitBtn" class="mt-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold py-3 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 btn-hover-scale">
@@ -252,29 +234,29 @@
       </button>
     </form>
 
-    <div class="border-t border-gray-200 dark:border-gray-700 pt-3 text-center text-xs text-gray-400 dark:text-gray-500">
+    <div class="border-t pt-3 text-center text-xs light-border dark-border light-text-light dark-text-light">
       <i class="far fa-clock"></i> 触发后请点击「检测文件」确保镜像已构建完成再下载
     </div>
   </div>
 
-  <!-- 右侧：状态面板 -->
-  <div class="glass-card rounded-2xl shadow-2xl flex flex-col h-full overflow-hidden">
-    <div class="p-5 border-b border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-gray-800/30">
+  <!-- 右侧状态面板 -->
+  <div class="glass-card rounded-2xl shadow-xl flex flex-col h-full overflow-hidden">
+    <div class="panel-header p-5">
       <div class="flex items-center justify-between flex-wrap gap-2">
-        <h2 class="text-xl font-bold flex items-center gap-2 text-gray-700 dark:text-gray-200">
-          <i class="fas fa-tasks text-emerald-600 dark:text-emerald-400"></i>
+        <h2 class="text-xl font-bold flex items-center gap-2 light-text-secondary dark-text-secondary">
+          <i class="fas fa-tasks text-emerald-600"></i>
           <span>镜像任务状态</span>
         </h2>
         <div class="flex gap-2">
-          <button id="clearAllStatus" class="text-xs text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-full">
+          <button id="clearAllStatus" class="text-xs transition flex items-center gap-1 px-3 py-1.5 rounded-full light-bg-gray dark-bg-gray light-text-muted dark-text-muted light-bg-gray-hover dark-bg-gray-hover">
             <i class="fas fa-trash-alt"></i> 清空记录
           </button>
-          <span id="taskCounter" class="text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2.5 py-1 rounded-full font-medium">0个任务</span>
+          <span id="taskCounter" class="text-xs px-2.5 py-1 rounded-full font-medium light-bg-gray dark-bg-gray light-text-secondary dark-text-secondary">0个任务</span>
         </div>
       </div>
     </div>
     <div id="statusPanel" class="flex-1 p-4 space-y-3 overflow-y-auto max-h-[60vh] md:max-h-[65vh] scrollbar-custom">
-      <div class="flex flex-col items-center justify-center py-10 text-gray-400 dark:text-gray-500">
+      <div class="flex flex-col items-center justify-center py-10 light-text-light dark-text-light">
         <i class="fas fa-inbox text-5xl mb-3 opacity-40"></i>
         <p class="text-sm">暂无镜像任务</p>
         <p class="text-xs mt-1">输入镜像并点击批量触发</p>
@@ -284,16 +266,16 @@
 </div>
 
 <script>
-// ======================== 深色模式切换 ========================
+// ======================== 主题切换 ========================
 const themeToggle = document.getElementById('themeToggle');
 const themeIcon = document.getElementById('themeIcon');
-// 检测本地存储或系统偏好
 const getPreferredTheme = () => {
   const saved = localStorage.getItem('theme');
   if (saved === 'dark' || saved === 'light') return saved;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  return 'light';
 };
 let currentTheme = getPreferredTheme();
+
 function applyTheme(theme) {
   if (theme === 'dark') {
     document.body.classList.add('dark');
@@ -305,19 +287,13 @@ function applyTheme(theme) {
   localStorage.setItem('theme', theme);
 }
 applyTheme(currentTheme);
+
 themeToggle.addEventListener('click', () => {
   currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
   applyTheme(currentTheme);
-  // 强制刷新所有任务面板中的加速地址显示细节（仅UI文字颜色自适应，无需额外逻辑）
-  // 重新刷新一下现有的infoMsg颜色不影响功能，但保证动态适应
-  for (let [img, record] of statusRowsMap.entries()) {
-    if (record.infoMsg && record.downloadBtn && record.downloadBtn.href) {
-      // 只做简单UI刷新无需额外动作，css自动覆盖
-    }
-  }
 });
 
-// ======================== 配置 ========================
+// ======================== 核心配置 ========================
 const WORKER_URL = 'https://download-docker-images.jianghangte.workers.dev';
 const RELEASE_TAG = 'docker-images';
 const RELEASE_BASE_URL = `https://github.com/jianghuaangte/download-docker-images/releases/download/${RELEASE_TAG}/`;
@@ -375,22 +351,23 @@ function updateTaskCounter() {
 function renderEmptyPanel() {
   statusPanel.innerHTML = '';
   const emptyDiv = document.createElement('div');
-  emptyDiv.className = "flex flex-col items-center justify-center py-10 text-gray-400 dark:text-gray-500";
+  emptyDiv.className = "flex flex-col items-center justify-center py-10 light-text-light dark-text-light";
   emptyDiv.innerHTML = '<i class="fas fa-inbox text-5xl mb-3 opacity-40"></i><p class="text-sm">暂无镜像任务</p><p class="text-xs mt-1">输入镜像并点击批量触发</p>';
   statusPanel.appendChild(emptyDiv);
 }
 
 function createTaskRow(imageName) {
   const container = document.createElement('div');
-  container.className = "task-item bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-3 transition-all";
+  container.className = "task-item";
   
   const header = document.createElement('div');
   header.className = "flex items-center justify-between gap-2 flex-wrap mb-2";
   const imageTitle = document.createElement('div');
   imageTitle.className = "flex items-center gap-2 flex-1 min-w-0";
-  imageTitle.innerHTML = `<i class="fab fa-docker text-emerald-500 dark:text-emerald-400 text-sm flex-shrink-0"></i><span class="font-mono text-sm font-semibold text-gray-800 dark:text-gray-100 truncate" title="${escapeHtml(imageName)}">${escapeHtml(imageName)}</span>`;
+  imageTitle.innerHTML = `<i class="fab fa-docker text-emerald-500 text-sm flex-shrink-0"></i><span class="font-mono text-sm font-semibold truncate light-text-primary dark-text-primary" title="${escapeHtml(imageName)}">${escapeHtml(imageName)}</span>`;
+  
   const statusBadge = document.createElement('span');
-  statusBadge.className = "status-badge text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-1 rounded-full whitespace-nowrap";
+  statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-gray dark-badge-gray";
   statusBadge.innerText = "⏳ 等待触发";
   header.appendChild(imageTitle);
   header.appendChild(statusBadge);
@@ -402,11 +379,11 @@ function createTaskRow(imageName) {
   
   const checkBtn = document.createElement('button');
   checkBtn.type = "button";
-  checkBtn.className = "check-btn bg-indigo-50 dark:bg-indigo-900/40 hover:bg-indigo-100 dark:hover:bg-indigo-800 text-indigo-700 dark:text-indigo-300 text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1";
+  checkBtn.className = "check-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 light-btn-indigo dark-btn-indigo";
   checkBtn.innerHTML = '<i class="fas fa-search"></i> 检测文件';
   
   const downloadBtn = document.createElement('a');
-  downloadBtn.className = "download-btn bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed";
+  downloadBtn.className = "download-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed light-bg-gray dark-bg-gray light-text-light dark-text-light";
   downloadBtn.innerHTML = '<i class="fas fa-download"></i> 下载';
   downloadBtn.style.pointerEvents = "none";
   downloadBtn.href = "#";
@@ -417,7 +394,7 @@ function createTaskRow(imageName) {
   
   const copyBtn = document.createElement('button');
   copyBtn.type = "button";
-  copyBtn.className = "copy-btn bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed";
+  copyBtn.className = "copy-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed light-bg-gray dark-bg-gray light-text-light dark-text-light";
   copyBtn.innerHTML = '<i class="far fa-copy"></i> 复制地址';
   copyBtn.disabled = true;
   
@@ -425,7 +402,7 @@ function createTaskRow(imageName) {
   actionBar.appendChild(copyBtn);
   
   const infoMsg = document.createElement('div');
-  infoMsg.className = "text-xs text-gray-400 dark:text-gray-500 mt-2 flex items-center gap-1";
+  infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-light dark-text-light";
   infoMsg.innerHTML = '<i class="fas fa-info-circle"></i> 尚未触发任务';
   
   container.appendChild(header);
@@ -441,17 +418,17 @@ function updateTriggerStatus(imageName, success, message = '') {
   const { statusBadge, infoMsg, downloadBtn, copyBtn, checkBtn } = record;
   if (success) {
     statusBadge.innerText = "✅ 已触发";
-    statusBadge.className = "status-badge text-xs bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 px-2 py-1 rounded-full";
+    statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-green dark-badge-green";
     infoMsg.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> 任务已提交，请稍后点击「检测文件」确认构建完成。';
+    infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
     checkBtn.disabled = false;
-    checkBtn.classList.remove('opacity-50', 'cursor-not-allowed');
   } else {
     statusBadge.innerText = "❌ 触发失败";
-    statusBadge.className = "status-badge text-xs bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 px-2 py-1 rounded-full";
+    statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-red dark-badge-red";
     infoMsg.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> 触发失败: ${escapeHtml(message)}`;
+    infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
     checkBtn.disabled = true;
     downloadBtn.style.pointerEvents = "none";
-    downloadBtn.classList.add('opacity-50');
     copyBtn.disabled = true;
   }
 }
@@ -461,7 +438,6 @@ async function performCheck(imageName) {
   if (!record) return;
   const { checkBtn, downloadBtn, copyBtn, infoMsg, statusBadge } = record;
   const originalUrl = getOriginalDownloadUrl(imageName);
-  const originalHtml = checkBtn.innerHTML;
   checkBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 检测中';
   checkBtn.disabled = true;
   infoMsg.innerHTML = '<i class="fas fa-hourglass-half"></i> 正在检测 GitHub Release 文件...';
@@ -472,25 +448,28 @@ async function performCheck(imageName) {
       const finalDownloadUrl = getAcceleratedDownloadUrl(imageName);
       downloadBtn.href = finalDownloadUrl;
       downloadBtn.style.pointerEvents = "auto";
-      downloadBtn.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'text-gray-400', 'cursor-not-allowed');
-      downloadBtn.classList.add('bg-emerald-100', 'dark:bg-emerald-900/60', 'text-emerald-700', 'dark:text-emerald-300', 'hover:bg-emerald-200');
+      downloadBtn.className = "download-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 light-btn-download dark-btn-download";
       downloadBtn.innerHTML = '<i class="fas fa-download"></i> 下载镜像';
       
       copyBtn.disabled = false;
-      copyBtn.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'text-gray-400', 'cursor-not-allowed');
-      copyBtn.classList.add('bg-gray-100', 'dark:bg-gray-600', 'text-gray-700', 'dark:text-gray-200', 'hover:bg-emerald-50');
-      copyBtn.onclick = () => { const url = getAcceleratedDownloadUrl(imageName); copyToClipboard(url, copyBtn); };
+      copyBtn.className = "copy-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 light-btn-copy dark-btn-copy";
+      copyBtn.onclick = (e) => {
+        e.preventDefault();
+        const urlToCopy = getAcceleratedDownloadUrl(imageName);
+        copyToClipboard(urlToCopy, copyBtn);
+      };
       
-      infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！加速地址已生效`;
+      infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-600"></i> 文件已就绪！加速地址已生效，可下载。`;
+      infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
       statusBadge.innerText = "✅ 可下载";
-      statusBadge.className = "status-badge text-xs bg-emerald-100 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 px-2 py-1 rounded-full";
+      statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-emerald dark-badge-emerald";
     } else {
-      infoMsg.innerHTML = `<i class="fas fa-times-circle text-orange-500"></i> 文件尚未在 Releases 中找到，请等待 Worker 构建完成。`;
+      infoMsg.innerHTML = `<i class="fas fa-times-circle text-amber-500"></i> 文件尚未在 Releases 中找到，请等待 Worker 构建完成。`;
+      infoMsg.className = "text-xs mt-2 flex items-center gap-1 light-text-muted dark-text-muted";
       statusBadge.innerText = "⏳ 等待构建";
-      statusBadge.className = "status-badge text-xs bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 px-2 py-1 rounded-full";
+      statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
       downloadBtn.style.pointerEvents = "none";
-      downloadBtn.classList.remove('bg-emerald-100');
-      downloadBtn.classList.add('bg-gray-100', 'dark:bg-gray-700', 'text-gray-400');
+      downloadBtn.className = "download-btn text-xs font-medium px-3 py-1.5 rounded-lg transition flex items-center gap-1 cursor-not-allowed light-bg-gray dark-bg-gray light-text-light dark-text-light";
       copyBtn.disabled = true;
     }
   } catch (err) {
@@ -508,7 +487,9 @@ async function copyToClipboard(text, btn) {
     const orig = btn.innerHTML;
     btn.innerHTML = '<i class="fas fa-check-circle"></i> 已复制';
     setTimeout(() => { btn.innerHTML = orig; }, 1500);
-  } catch { alert('复制失败，可手动复制'); }
+  } catch (err) {
+    alert('手动复制: ' + text);
+  }
 }
 
 async function triggerImage(image, apiKey) {
@@ -516,21 +497,28 @@ async function triggerImage(image, apiKey) {
   if (!record) return;
   const { statusBadge, infoMsg, checkBtn } = record;
   statusBadge.innerText = "⏳ 触发中...";
-  statusBadge.className = "status-badge text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 px-2 py-1 rounded-full";
+  statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-amber dark-badge-amber";
   infoMsg.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 正在请求 Worker ...';
   checkBtn.disabled = true;
   try {
-    const res = await fetch(WORKER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image, key: apiKey }) });
-    let data; try { data = await res.json(); } catch(e){ data = { success: false, message: await res.text() }; }
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image, key: apiKey })
+    });
+    let data;
+    try { data = await res.json(); } catch(e){ data = { success: false, message: await res.text() }; }
     if (data?.success) {
       updateTriggerStatus(image, true);
       setTimeout(() => { if(statusRowsMap.has(image)) performCheck(image); }, 2000);
-    } else { updateTriggerStatus(image, false, data?.message || 'Worker失败'); }
-  } catch(err) { updateTriggerStatus(image, false, err.message); }
+    } else {
+      updateTriggerStatus(image, false, data?.message || 'Worker 返回失败');
+    }
+  } catch(err) {
+    updateTriggerStatus(image, false, err.message);
+  }
 }
 
-resetMirrorBtn.onclick = () => { mirrorPrefixInput.value = 'https://ghfast.top'; refreshAllDownloadUrls(); };
-clearMirrorBtn.onclick = () => { mirrorPrefixInput.value = ''; refreshAllDownloadUrls(); };
 function refreshAllDownloadUrls() {
   for (let [img, rec] of statusRowsMap.entries()) {
     if (rec.downloadBtn && rec.downloadBtn.href && rec.downloadBtn.style.pointerEvents !== 'none') {
@@ -538,34 +526,62 @@ function refreshAllDownloadUrls() {
     }
   }
 }
+
 mirrorPrefixInput.addEventListener('input', refreshAllDownloadUrls);
+resetMirrorBtn.onclick = () => { mirrorPrefixInput.value = 'https://ghfast.top'; refreshAllDownloadUrls(); };
+clearMirrorBtn.onclick = () => { mirrorPrefixInput.value = ''; refreshAllDownloadUrls(); };
 
 clearAllStatusBtn.onclick = () => {
-  if (statusRowsMap.size > 0 && confirm('清空所有任务记录？')) { statusRowsMap.clear(); renderEmptyPanel(); updateTaskCounter(); }
+  if (statusRowsMap.size > 0 && confirm('清空所有任务记录？不会影响已在后台构建的任务。')) {
+    statusRowsMap.clear();
+    renderEmptyPanel();
+    updateTaskCounter();
+  }
 };
 
 form.onsubmit = async (e) => {
   e.preventDefault();
-  const raw = imageListTextarea.value.trim();
-  if(!raw) return alert('请输入镜像');
-  const images = raw.split('\n').map(s=>s.trim()).filter(s=>s);
-  const key = apiKeyInput.value.trim();
-  if(!key) return alert('授权码不能为空');
-  if(statusPanel.querySelector('.flex.flex-col.items-center.justify-center.py-10')) statusPanel.innerHTML = '';
-  for(const img of images) {
-    if(!statusRowsMap.has(img)) {
+  const rawImages = imageListTextarea.value.trim();
+  if (!rawImages) return alert('请输入至少一个镜像');
+  const images = rawImages.split('\n').map(s => s.trim()).filter(s => s);
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey) return alert('授权码不能为空');
+  
+  if (statusPanel.querySelector('.flex.flex-col.items-center.justify-center.py-10')) {
+    statusPanel.innerHTML = '';
+  }
+  
+  for (const img of images) {
+    if (!statusRowsMap.has(img)) {
       const task = createTaskRow(img);
       statusPanel.appendChild(task.container);
-      statusRowsMap.set(img, { ...task, checkBtn: task.checkBtn, downloadBtn: task.downloadBtn, copyBtn: task.copyBtn, statusBadge: task.statusBadge, infoMsg: task.infoMsg });
+      statusRowsMap.set(img, { 
+        ...task, 
+        checkBtn: task.checkBtn, 
+        downloadBtn: task.downloadBtn, 
+        copyBtn: task.copyBtn, 
+        statusBadge: task.statusBadge, 
+        infoMsg: task.infoMsg 
+      });
       task.checkBtn.onclick = () => performCheck(img);
     }
-    await triggerImage(img, key);
+    await triggerImage(img, apiKey);
   }
   updateTaskCounter();
-  if(statusPanel.lastElementChild) statusPanel.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (statusPanel.lastElementChild) {
+    statusPanel.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
 };
 
-function escapeHtml(str) { return str.replace(/[&<>]/g, m => m==='&'?'&amp;': m==='<'?'&lt;':'&gt;'); }
+function escapeHtml(str) {
+  return str.replace(/[&<>]/g, function(m) {
+    if (m === '&') return '&amp;';
+    if (m === '<') return '&lt;';
+    if (m === '>') return '&gt;';
+    return m;
+  });
+}
+
 updateTaskCounter();
 </script>
 </body>
