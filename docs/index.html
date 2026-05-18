@@ -24,7 +24,6 @@
         <textarea id="imageList" placeholder="例如：\nnginx:latest\nredis:7.2.1\nubuntu:22.04"
           class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-200"
           rows="6" required></textarea>
-        <p class="text-gray-400 text-sm mt-1">每行输入一个镜像名称</p>
       </div>
 
       <div>
@@ -87,7 +86,14 @@ form.addEventListener('submit', async e=>{
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({image:img,key})
       });
-      const data=await res.json();
+
+      let data;
+      try{
+        data=await res.json();
+      }catch{
+        data={success:false,message:await res.text()};
+      }
+
       if(data.success){
         span.textContent=`🎉 镜像 ${img} ：任务已触发！`;
         span.classList.remove('text-gray-600');
@@ -102,6 +108,7 @@ form.addEventListener('submit', async e=>{
         span.textContent=`❌ 镜像 ${img} ：触发失败 - ${data.message||'未知错误'}`;
         span.classList.add('text-red-500');
       }
+
     }catch(err){
       span.textContent=`❌ 镜像 ${img} ：请求出错 - ${err.message}`;
       span.classList.add('text-red-500');
