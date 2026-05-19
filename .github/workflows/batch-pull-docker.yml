@@ -26,64 +26,72 @@ jobs:
 
       - name: Pull and save images
         run: |
-          set -e
           IMAGES=$(echo '${{ github.event.inputs.images }}' | grep -v '^$')
-
-          # 获取 runner 架构对应的 Docker 平台
-          ARCH=$(uname -m)
-          case "$ARCH" in
-            x86_64) PLATFORM="linux/amd64" ;;
-            aarch64) PLATFORM="linux/arm64" ;;
-            *) PLATFORM="linux/amd64" ;;
-          esac
-          echo "Runner architecture detected: $ARCH -> $PLATFORM"
-
+          
           for image in $IMAGES; do
+            echo "========================================"
             echo "Processing: $image"
+            
+            # 从镜像标签中自动检测架构
+            detect_arch() {
+              local img="$1"
+              # 检测常见的架构标识
+              if echo "$img" | grep -qi "arm64v8\|arm64\|aarch64"; then
+                echo "linux/arm64"
+              elif echo "$img" | grep -qi "arm32v7\|armv7"; then
+                echo "linux/arm/v7"
+              elif echo "$img" | grep -qi "amd64\|x86_64"; then
+                echo "linux/amd64"
+              elif echo "$img" | grep -qi "386\|x86"; then
+                echo "linux/386"
+              elif echo "$img" | grep -qi "ppc64le"; then
+                echo "linux/ppc64le"
+              elif echo "$img" | grep -qi "s390x"; then
+                echo "linux/s390x"
+              else
+                # 默认使用 amd64
+                echo "linux/amd64"
+              fi
+            }
+            
+            TARGET_PLATFORM=$(detect_arch "$image")
+            echo "Detected architecture: $TARGET_PLATFORM"
+            
+            # 为文件名创建安全名称（保留原始镜像名）
             SAFE_NAME=$(echo "$image" | tr '/' '_' | tr ':' '_')
-
-            # 检查镜像是否存在
-            docker buildx imagetools inspect "$image" > /dev/null 2>&1
-            if [ $? -ne 0 ]; then
-              echo "⚠️ 镜像 $image 不存在或无效，跳过..."
+            FINAL_NAME="${SAFE_NAME}"
+            
+            echo "Pulling $image for platform $TARGET_PLATFORM..."
+            if ! docker pull --platform $TARGET_PLATFORM "$image"; then
+              echo "❌ Failed to pull $image, skipping..."
               continue
             fi
-
-            # 使用 buildx inspect 获取镜像支持的架构
-            SUPPORTED_ARCHS=$(docker buildx imagetools inspect "$image" \
-              --raw | jq -r '.manifests[].platform.architecture' | sort -u)
-            echo "镜像支持的架构: $SUPPORTED_ARCHS"
-
-            # 判断 runner 架构是否支持
-            if echo "$SUPPORTED_ARCHS" | grep -qw "${ARCH}"; then
-              echo "✅ 镜像支持当前架构 $ARCH"
-            else
-              echo "⚠️ 镜像不支持当前架构 $ARCH，尝试用 QEMU 模拟"
-            fi
-
-            # 拉取镜像
-            echo "拉取 $image 平台 $PLATFORM..."
-            docker pull --platform "$PLATFORM" "$image"
-
-            # 导出 tar
-            TAR_FILE="${SAFE_NAME}.tar"
-            docker save "$image" -o "$TAR_FILE"
-
-            FILE_SIZE=$(stat -c%s "$TAR_FILE")
+            
+            echo "Saving $image..."
+            docker save "$image" -o "${FINAL_NAME}.tar"
+            
+            FILE_SIZE=$(stat -c%s "${FINAL_NAME}.tar")
             FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
-            echo "文件大小: ${FILE_SIZE_MB} MB"
-
+            echo "File size: ${FILE_SIZE_MB} MB"
+            
             if [ $FILE_SIZE -gt 943718400 ]; then
-              echo "拆分大文件..."
-              split -b 950m "$TAR_FILE" "${SAFE_NAME}.part."
-              rm "$TAR_FILE"
+              echo "Splitting large file..."
+              split -b 950m "${FINAL_NAME}.tar" "${FINAL_NAME}.part."
+              rm "${FINAL_NAME}.tar"
             else
-              gzip "$TAR_FILE"
+              echo "Compressing ${FINAL_NAME}.tar..."
+              gzip "${FINAL_NAME}.tar"
             fi
+            
+            # 清理镜像节省空间
+            docker rmi "$image" || true
+            echo "========================================"
           done
-
-          echo "所有文件生成完成:"
-          ls -la
+          
+          echo "========================================"
+          echo "Files generated:"
+          ls -lah *.tar.gz *.part.* 2>/dev/null || echo "No files found"
+          echo "========================================"
 
       - name: Delete old release
         run: |
@@ -95,7 +103,7 @@ jobs:
       - name: Create new release
         run: |
           gh release create ${{ env.RELEASE_TAG }} \
-            --title "Docker Images Batch Build - $(date '+%Y-%m-%d %H:%M:%S')" \
+            --title "Docker Images Batch - $(date '+%Y-%m-%d %H:%M:%S')" \
             --notes "镜像列表:\n${{ github.event.inputs.images }}" \
             --repo ${{ github.repository }}
         env:
@@ -103,12 +111,22 @@ jobs:
 
       - name: Upload artifacts
         run: |
+          files_uploaded=0
           for file in *.tar.gz *.part.*; do
             if [ -f "$file" ]; then
+              echo "Uploading: $file"
               gh release upload ${{ env.RELEASE_TAG }} "$file" \
                 --repo ${{ github.repository }} \
                 --clobber
+              files_uploaded=$((files_uploaded + 1))
             fi
           done
+          
+          if [ $files_uploaded -eq 0 ]; then
+            echo "❌ No files were uploaded! Check if any images were successfully pulled."
+            exit 1
+          fi
+          
+          echo "✅ Successfully uploaded $files_uploaded files"
         env:
           GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
