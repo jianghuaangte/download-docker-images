@@ -18,18 +18,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Docker
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build images
+      - name: Enable QEMU for multi-arch
+        uses: docker/setup-qemu-action@v2
+
+      - name: Pull and save images
         run: |
           IMAGES=$(echo '${{ github.event.inputs.images }}' | grep -v '^$')
-          
+          ARCH=$(uname -m)
+          echo "Host architecture detected: $ARCH"
+
+          # Map uname arch to Docker platform
+          case "$ARCH" in
+            x86_64) PLATFORM="linux/amd64" ;;
+            aarch64) PLATFORM="linux/arm64" ;;
+            *) PLATFORM="linux/amd64" ;;  # 默认amd64
+          esac
+
           for image in $IMAGES; do
             echo "Processing: $image"
             SAFE_NAME=$(echo "$image" | tr '/' '_' | tr ':' '_')
             
-            docker pull "$image"
+            # 使用 buildx --platform 拉取镜像
+            docker buildx imagetools inspect "$image" > /dev/null 2>&1
+            if [ $? -ne 0 ]; then
+              echo "Image $image does not exist or invalid, skipping..."
+              continue
+            fi
+
+            echo "Pulling $image for platform $PLATFORM..."
+            docker pull --platform $PLATFORM "$image"
+
+            echo "Saving $image..."
             docker save "$image" -o "${SAFE_NAME}.tar"
             
             FILE_SIZE=$(stat -c%s "${SAFE_NAME}.tar")
@@ -44,7 +66,7 @@ jobs:
               gzip "${SAFE_NAME}.tar"
             fi
           done
-          
+
           echo "Files generated:"
           ls -la
 
