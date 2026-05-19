@@ -26,48 +26,63 @@ jobs:
 
       - name: Pull and save images
         run: |
+          set -e
           IMAGES=$(echo '${{ github.event.inputs.images }}' | grep -v '^$')
-          ARCH=$(uname -m)
-          echo "Host architecture detected: $ARCH"
 
-          # Map uname arch to Docker platform
+          # 获取 runner 架构对应的 Docker 平台
+          ARCH=$(uname -m)
           case "$ARCH" in
             x86_64) PLATFORM="linux/amd64" ;;
             aarch64) PLATFORM="linux/arm64" ;;
-            *) PLATFORM="linux/amd64" ;;  # 默认amd64
+            *) PLATFORM="linux/amd64" ;;
           esac
+          echo "Runner architecture detected: $ARCH -> $PLATFORM"
 
           for image in $IMAGES; do
             echo "Processing: $image"
             SAFE_NAME=$(echo "$image" | tr '/' '_' | tr ':' '_')
-            
-            # 使用 buildx --platform 拉取镜像
+
+            # 检查镜像是否存在
             docker buildx imagetools inspect "$image" > /dev/null 2>&1
             if [ $? -ne 0 ]; then
-              echo "Image $image does not exist or invalid, skipping..."
+              echo "⚠️ 镜像 $image 不存在或无效，跳过..."
               continue
             fi
 
-            echo "Pulling $image for platform $PLATFORM..."
-            docker pull --platform $PLATFORM "$image"
+            # 使用 buildx inspect 获取镜像支持的架构
+            SUPPORTED_ARCHS=$(docker buildx imagetools inspect "$image" \
+              --raw | jq -r '.manifests[].platform.architecture' | sort -u)
+            echo "镜像支持的架构: $SUPPORTED_ARCHS"
 
-            echo "Saving $image..."
-            docker save "$image" -o "${SAFE_NAME}.tar"
-            
-            FILE_SIZE=$(stat -c%s "${SAFE_NAME}.tar")
-            FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
-            echo "File size: ${FILE_SIZE_MB} MB"
-            
-            if [ $FILE_SIZE -gt 943718400 ]; then
-              echo "Splitting large file..."
-              split -b 950m "${SAFE_NAME}.tar" "${SAFE_NAME}.part."
-              rm "${SAFE_NAME}.tar"
+            # 判断 runner 架构是否支持
+            if echo "$SUPPORTED_ARCHS" | grep -qw "${ARCH}"; then
+              echo "✅ 镜像支持当前架构 $ARCH"
             else
-              gzip "${SAFE_NAME}.tar"
+              echo "⚠️ 镜像不支持当前架构 $ARCH，尝试用 QEMU 模拟"
+            fi
+
+            # 拉取镜像
+            echo "拉取 $image 平台 $PLATFORM..."
+            docker pull --platform "$PLATFORM" "$image"
+
+            # 导出 tar
+            TAR_FILE="${SAFE_NAME}.tar"
+            docker save "$image" -o "$TAR_FILE"
+
+            FILE_SIZE=$(stat -c%s "$TAR_FILE")
+            FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
+            echo "文件大小: ${FILE_SIZE_MB} MB"
+
+            if [ $FILE_SIZE -gt 943718400 ]; then
+              echo "拆分大文件..."
+              split -b 950m "$TAR_FILE" "${SAFE_NAME}.part."
+              rm "$TAR_FILE"
+            else
+              gzip "$TAR_FILE"
             fi
           done
 
-          echo "Files generated:"
+          echo "所有文件生成完成:"
           ls -la
 
       - name: Delete old release
