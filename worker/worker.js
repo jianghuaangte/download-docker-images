@@ -23,6 +23,17 @@ export default {
 
     try {
       const body = await request.json()
+
+      // 私有 Release 资产下载：用 token 换一次性签名地址。
+      // 浏览器不能自己跟 302（release-assets.githubusercontent.com 没有 CORS 头），
+      // 所以由 Worker 解析 Location 交给页面去导航，纯 token、不依赖浏览器登录。
+      if (body && body.downloadAsset) {
+        if (body.key !== API_KEY) {
+          return json({ success: false, message: 'Unauthorized' }, 401)
+        }
+        return await resolveAssetLocation(body.downloadAsset, GITHUB_TOKEN)
+      }
+
       const images = body.images
       const key = body.key || body.apiKey
       const format = normalizeFormat(body.format)
@@ -84,6 +95,8 @@ const PUBLIC_OWNER = 'jianghuaangte'
 const PUBLIC_REPO = 'download-docker-images'
 const PUBLIC_WORKFLOW_FILE = 'batch-pull-docker.yml'
 
+const PRIVATE_REPO = 'jianghuaangte/private-download-docker-images'
+
 const ALLOWED_FORMATS = ['tar', 'tar.gz']
 const DEFAULT_FORMAT = 'tar'
 
@@ -92,6 +105,43 @@ function normalizeFormat(value) {
   if (typeof value !== 'string') return DEFAULT_FORMAT
   const v = value.trim().toLowerCase()
   return ALLOWED_FORMATS.includes(v) ? v : DEFAULT_FORMAT
+}
+
+// GET /repos/{owner}/{repo}/releases/assets/{id} + Accept: octet-stream
+// 文档说明可能返回 200（直接给字节）或 302（给签名地址），这里两种都处理：
+//   302 → 把 Location 交给调用方去导航
+//   200 → 说明是流式返回，浏览器跨域读不了，返回提示让前端回退
+async function resolveAssetLocation(asset, token) {
+  const id = Number(asset && asset.id)
+  if (!Number.isInteger(id) || id <= 0) {
+    return json({ success: false, message: 'invalid asset id' }, 400)
+  }
+  const repo = asset.repo === 'private' ? PRIVATE_REPO : `${PUBLIC_OWNER}/${PUBLIC_REPO}`
+
+  const res = await fetch(`https://api.github.com/repos/${repo}/releases/assets/${id}`, {
+    headers: {
+      'Accept': 'application/octet-stream',
+      'Authorization': `Bearer ${token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'docker-batch-download-worker'
+    },
+    redirect: 'manual'
+  })
+
+  const location = res.headers.get('Location')
+  if (location && (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307 || res.status === 308)) {
+    return json({ success: true, status: res.status, location: location }, 200)
+  }
+
+  const text = await res.text().catch(() => '')
+  return json({
+    success: false,
+    status: res.status,
+    message: res.status === 200
+      ? '资产接口直接返回了内容（非 302），浏览器无法跨域读取，请用 Release 下载地址'
+      : `GitHub asset API ${res.status}`,
+    details: text.slice(0, 300)
+  }, 200)
 }
 
 const CORS_HEADERS = {

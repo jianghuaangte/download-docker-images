@@ -492,9 +492,46 @@ function createTaskRow(imageName, isPrivate) {
 function fileDownloadHtml(file, isPrivate) {
   if (!isPrivate) {
     const downloadUrl = getAcceleratedUrl(file.name);
-    return `<a href="${downloadUrl}" download class="text-emerald-600 hover:text-emerald-700" target="_blank"><i class="fas fa-download"></i></a>`;
+    return `<a href="${downloadUrl}" data-dl download class="text-emerald-600 hover:text-emerald-700" target="_blank"><i class="fas fa-download"></i></a>`;
   }
-  return `<button class="file-dl-btn text-xs font-medium rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700"><i class="fas fa-download"></i></button>`;
+  // 私有 Release 资产：assets 接口会 302 到 release-assets.githubusercontent.com，
+  // 而对象存储不返回 Access-Control-Allow-Origin，浏览器 fetch 读不到字节。
+  // 所以先用授权码让 Worker 把 302 解析成一次性签名地址（纯 token），
+  // 失败再回退到 Release 下载地址（走浏览器登录会话）。
+  return `<a href="${privateAssetUrl(file)}" data-dl target="_blank" rel="noopener" class="text-emerald-600 hover:text-emerald-700"><i class="fas fa-download"></i></a>`;
+}
+
+// 私有资产的 Release 下载地址（回退用，需要浏览器已登录有权限的 GitHub 账号）
+function privateAssetUrl(file) {
+  return `https://github.com/${PRIVATE_GITHUB_REPO}/releases/download/${RELEASE_TAG}/${encodeURIComponent(file.name)}`;
+}
+
+// 让 Worker 用 token 换资产的一次性签名地址；拿不到就返回 null
+async function resolvePrivateAssetLocation(file) {
+  const key = apiKeyInput.value.trim();
+  if (!key) return null;
+  try {
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, downloadAsset: { repo: 'private', id: file.id } })
+    });
+    const data = await res.json();
+    if (data && data.success && data.location) return data.location;
+    console.warn('签名地址获取失败:', data && data.message);
+  } catch (err) {
+    console.warn('签名地址获取异常:', err.message);
+  }
+  return null;
+}
+
+// 用隐藏 iframe 触发下载：跨域导航不受 CORS 限制，也不会被弹窗拦截
+function triggerDownload(url) {
+  const frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  frame.src = url;
+  document.body.appendChild(frame);
+  setTimeout(() => frame.remove(), 120000);
 }
 
 // 更新任务显示
@@ -559,60 +596,33 @@ async function updateTaskDisplay(imageName) {
   
   fileListDiv.innerHTML = filesHtml;
   
-  // 私有模式下绑定带 Token 的下载事件
-  if (isPrivate) {
-    fileListDiv.querySelectorAll('.file-dl-btn').forEach((btn, idx) => {
-      btn.onclick = async (e) => {
-        e.stopPropagation();
-        try {
-          await downloadPrivateAsset(files[idx], btn);
-        } catch (err) {
-          btn.textContent = '下载失败';
-          btn.style.pointerEvents = '';
-        }
-      };
+  // 公开走加速链接；私有用 token 换签名地址，失败回退 Release 链接
+  const resolveDownloadUrl = async (file) => {
+    if (!isPrivate) return getAcceleratedUrl(file.name);
+    const signed = await resolvePrivateAssetLocation(file);
+    return signed || privateAssetUrl(file);
+  };
+
+  fileListDiv.querySelectorAll('a[data-dl]').forEach((a, idx) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      resolveDownloadUrl(files[idx]).then(triggerDownload);
     });
-    
-    if (files.length > 0) {
-      downloadAllBtn.disabled = false;
-      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-btn-download dark-btn-download";
-      downloadAllBtn.onclick = async () => {
-        for (const file of files) {
-          const btn = downloadAllBtn;
-          const orig = btn.textContent;
-          btn.textContent = '下载中…';
-          btn.disabled = true;
-          try {
-            await downloadPrivateAsset(file, btn);
-          } catch (err) {
-            // error shown by downloadPrivateAsset (btn text changed to 下载失败)
-          } finally {
-            btn.textContent = orig;
-            btn.disabled = false;
-            btn.style.pointerEvents = '';
-          }
-        }
-      };
-    } else {
-      downloadAllBtn.disabled = true;
-      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-bg-gray dark-bg-gray light-text-muted dark-text-muted";
-      downloadAllBtn.onclick = null;
-    }
+  });
+
+  if (files.length > 0) {
+    downloadAllBtn.disabled = false;
+    downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-btn-download dark-btn-download";
+    downloadAllBtn.onclick = async () => {
+      for (let i = 0; i < files.length; i++) {
+        triggerDownload(await resolveDownloadUrl(files[i]));
+        await new Promise(r => setTimeout(r, 400));
+      }
+    };
   } else {
-    if (files.length > 0) {
-      downloadAllBtn.disabled = false;
-      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-btn-download dark-btn-download";
-      downloadAllBtn.onclick = () => {
-        files.forEach(file => {
-          const url = getAcceleratedUrl(file.name);
-          window.open(url, '_blank');
-        });
-      };
-    } else {
-      downloadAllBtn.disabled = true;
-      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-bg-gray dark-bg-gray light-text-muted dark-text-muted";
-      downloadAllBtn.onclick = null;
-    }
+    downloadAllBtn.disabled = true;
+    downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-bg-gray dark-bg-gray light-text-muted dark-text-muted";
+    downloadAllBtn.onclick = null;
   }
   
   const formatLabel = isSplit ? `${partFormat || 'tar'} 分片` : (packFormat || DEFAULT_PACK_FORMAT);
@@ -665,45 +675,6 @@ async function ghApi(path, options = {}) {
     try { data = await res.json(); } catch (e) { data = null; }
   }
   return { ok: res.ok, status: res.status, data };
-}
-
-// 下载私有 Release 资产（必须带 Token，不能走加速/匿名地址）
-async function downloadPrivateAsset(asset, btn) {
-  const original = btn.textContent;
-  btn.textContent = '下载中…';
-  btn.style.pointerEvents = 'none';
-
-  try {
-    const token = ghcrTokenInput.value.trim();
-    if (!token) throw new Error('下载私有资产需要 GitHub Token');
-    const res = await fetch(
-      `${GITHUB_API}/repos/${PRIVATE_GITHUB_REPO}/releases/assets/${asset.id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/octet-stream'
-        },
-        redirect: 'follow'
-      }
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = asset.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-  } catch (e) {
-    btn.textContent = '下载失败';
-    btn.style.pointerEvents = '';
-    console.error('私有下载失败:', e.message);
-    return;
-  }
-  btn.textContent = original;
-  btn.style.pointerEvents = '';
 }
 
 // 先由 Worker 验证授权码，验证通过后再使用 Token 直连 GitHub 触发私有工作流
