@@ -194,12 +194,28 @@
         <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
           <i class="fas fa-key text-amber-600 text-sm"></i>
           <span>授权码</span>
-          <span class="text-xs text-red-400 ml-1">*</span>
+          <span class="text-xs font-normal light-text-light dark-text-light" id="apiKeyHint">（填写了下方 GitHub Token 时可留空）</span>
         </label>
         <div class="relative">
-          <input type="password" id="apiKey" placeholder="请输入授权码" class="w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 transition" required>
+          <input type="password" id="apiKey" placeholder="请输入授权码" class="w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 transition">
           <i class="fas fa-lock absolute right-4 top-1/2 -translate-y-1/2 light-text-light dark-text-light text-sm"></i>
         </div>
+      </div>
+
+      <div>
+        <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
+          <i class="fab fa-github text-slate-700 dark:text-slate-300 text-sm"></i>
+          <span>GitHub Token</span>
+          <span class="text-xs font-normal light-text-light dark-text-light">（可选 · 下载 ghcr.io 私有镜像）</span>
+        </label>
+        <div class="relative">
+          <input type="password" id="ghcrToken" placeholder="ghp_xxxxxxxx 或 github_pat_xxxxxxxx" autocomplete="off" spellcheck="false"
+            class="w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 transition font-mono text-sm">
+          <i id="toggleToken" class="fas fa-eye absolute right-4 top-1/2 -translate-y-1/2 light-text-light dark-text-light text-sm cursor-pointer"></i>
+        </div>
+        <p class="text-xs mt-1 light-text-light dark-text-light">
+          <i class="fas fa-info-circle"></i> 需要 <code>repo</code>、<code>workflow</code>、<code>read:packages</code> 权限；仅在本浏览器内使用，直接调用 GitHub API 触发，不会经过加速服务
+        </p>
       </div>
 
       <div>
@@ -276,7 +292,9 @@ themeToggle.addEventListener('click', () => {
 
 // 配置
 const WORKER_URL = 'https://docker.myfiles.ccwu.cc';
+const GITHUB_API = 'https://api.github.com';
 const GITHUB_REPO = 'jianghuaangte/download-docker-images';
+const WORKFLOW_FILE = 'batch-pull-docker.yml';
 const RELEASE_TAG = 'docker-images-batch';
 const RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`;
 const RELEASE_DOWNLOAD_URL = `https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}`;
@@ -284,6 +302,7 @@ const RELEASE_DOWNLOAD_URL = `https://github.com/${GITHUB_REPO}/releases/downloa
 const form = document.getElementById('dockerForm');
 const imageListTextarea = document.getElementById('imageList');
 const apiKeyInput = document.getElementById('apiKey');
+const ghcrTokenInput = document.getElementById('ghcrToken');
 const mirrorPrefixInput = document.getElementById('mirrorPrefix');
 const resetMirrorBtn = document.getElementById('resetMirror');
 const statusPanel = document.getElementById('statusPanel');
@@ -306,8 +325,11 @@ async function fetchReleaseAssets() {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const headers = { 'Accept': 'application/vnd.github+json' };
+    const token = ghcrTokenInput.value.trim();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     const response = await fetch(RELEASE_API_URL, {
-      headers: { 'Accept': 'application/vnd.github+json' },
+      headers: headers,
       signal: controller.signal,
       cache: 'no-store'
     });
@@ -497,8 +519,58 @@ async function performCheck(imageName, forceRefresh = false) {
   }
 }
 
+// 调用 GitHub REST API
+async function ghApi(path, options = {}) {
+  const headers = {
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Authorization': `Bearer ${ghcrTokenInput.value.trim()}`
+  };
+  if (options.body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(GITHUB_API + path, {
+    method: options.method || 'GET',
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+  let data = null;
+  if (res.status !== 204) {
+    try { data = await res.json(); } catch (e) { data = null; }
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// 直接用 GitHub Token 触发工作流，Token 同时用于登录 ghcr.io 拉取私有镜像
+async function triggerByGitHubApi(images, token) {
+  const me = await ghApi('/user');
+  if (!me.ok) {
+    if (me.status === 401) throw new Error('Token 无效或已过期');
+    throw new Error(`Token 校验失败（HTTP ${me.status}）`);
+  }
+
+  const repoInfo = await ghApi(`/repos/${GITHUB_REPO}`);
+  const ref = (repoInfo.ok && repoInfo.data && repoInfo.data.default_branch) || 'main';
+
+  const res = await ghApi(`/repos/${GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
+    method: 'POST',
+    body: {
+      ref,
+      inputs: {
+        images: images.join('\n'),
+        ghcr_login: 'true',
+        ghcr_username: me.data.login,
+        ghcr_token: token
+      }
+    }
+  });
+
+  if (res.status === 204 || res.ok) return { login: me.data.login };
+  if (res.status === 403) throw new Error('Token 权限不足，需要 repo 和 workflow 权限');
+  if (res.status === 404) throw new Error('工作流不存在或 Token 无权访问该仓库');
+  throw new Error((res.data && res.data.message) || `GitHub 返回 ${res.status}`);
+}
+
 // 触发批量构建
-async function triggerBatchImages(images, apiKey) {
+async function triggerBatchImages(images, apiKey, token) {
   for (const img of images) {
     if (!statusRowsMap.has(img)) {
       const task = createTaskRow(img);
@@ -517,20 +589,31 @@ async function triggerBatchImages(images, apiKey) {
   submitBtn.disabled = true;
   
   try {
-    const response = await fetch(WORKER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images, key: apiKey })
-    });
-    
-    const result = await response.json();
-    
-    if (result.success) {
+    let success = false;
+    let failMessage = '';
+    let successNote = '已触发，等待构建完成（约5-15分钟）';
+
+    if (token) {
+      const info = await triggerByGitHubApi(images, token);
+      success = true;
+      successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)}），等待构建完成（约5-15分钟）`;
+    } else {
+      const response = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images, key: apiKey })
+      });
+      const result = await response.json();
+      success = !!result.success;
+      failMessage = result.message;
+    }
+
+    if (success) {
       for (const img of images) {
         const record = statusRowsMap.get(img);
         record.statusBadge.innerText = "✅ 已触发";
         record.statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-green dark-badge-green";
-        record.infoMsg.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> 已触发，等待构建完成（约5-15分钟）';
+        record.infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-500"></i> ${successNote}`;
         record.checkBtn.disabled = false;
       }
       
@@ -545,15 +628,16 @@ async function triggerBatchImages(images, apiKey) {
         const record = statusRowsMap.get(img);
         record.statusBadge.innerText = "❌ 触发失败";
         record.statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-red dark-badge-red";
-        record.infoMsg.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> 触发失败: ${result.message}`;
+        record.infoMsg.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> 触发失败: ${escapeHtml(failMessage || '未知错误')}`;
       }
-      alert(`触发失败: ${result.message}`);
+      alert(`触发失败: ${failMessage || '未知错误'}`);
     }
   } catch (err) {
     for (const img of images) {
       const record = statusRowsMap.get(img);
       record.statusBadge.innerText = "❌ 触发失败";
-      record.infoMsg.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> 网络错误: ${err.message}`;
+      record.statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-red dark-badge-red";
+      record.infoMsg.innerHTML = `<i class="fas fa-exclamation-triangle text-red-500"></i> 触发失败: ${escapeHtml(err.message)}`;
     }
   } finally {
     submitBtn.innerHTML = '<i class="fas fa-cloud-download-alt"></i> 批量触发下载任务';
@@ -595,13 +679,24 @@ form.onsubmit = async (e) => {
   if (!rawImages) return alert('请输入至少一个镜像');
   const images = rawImages.split('\n').map(s => s.trim()).filter(s => s);
   const apiKey = apiKeyInput.value.trim();
-  if (!apiKey) return alert('授权码不能为空');
+  const token = ghcrTokenInput.value.trim();
+  if (!apiKey && !token) return alert('请填写授权码，或填写 GitHub Token 直接触发');
   
   if (statusPanel.querySelector('.flex.flex-col.items-center.justify-center.py-10')) {
     statusPanel.innerHTML = '';
   }
   
-  await triggerBatchImages(images, apiKey);
+  await triggerBatchImages(images, apiKey, token);
+};
+
+// 显示 / 隐藏 Token
+document.getElementById('toggleToken').onclick = () => {
+  const icon = document.getElementById('toggleToken');
+  const hidden = ghcrTokenInput.type === 'password';
+  ghcrTokenInput.type = hidden ? 'text' : 'password';
+  icon.className = hidden
+    ? 'fas fa-eye-slash absolute right-4 top-1/2 -translate-y-1/2 light-text-light dark-text-light text-sm cursor-pointer'
+    : 'fas fa-eye absolute right-4 top-1/2 -translate-y-1/2 light-text-light dark-text-light text-sm cursor-pointer';
 };
 
 function escapeHtml(str) {

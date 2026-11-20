@@ -4,9 +4,28 @@ on:
   workflow_dispatch:
     inputs:
       images:
-        description: 'Docker镜像列表（每行一个）'
+        description: 'Docker镜像列表（每行一个，支持 ghcr.io 等需要认证的仓库）'
         required: true
         type: string
+      ghcr_login:
+        description: '是否登录 ghcr.io（使用 GitHub Token 拉取私有/受限镜像）'
+        required: false
+        type: boolean
+        default: true
+      ghcr_username:
+        description: 'ghcr.io 用户名（留空则使用 GHCR_USERNAME 密钥，再留空则使用触发工作流的账号）'
+        required: false
+        type: string
+        default: ''
+      ghcr_token:
+        description: 'GitHub Token（需 read:packages 权限，用于拉取 ghcr.io 私有镜像；留空则使用 GHCR_TOKEN 密钥）'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
+  packages: read
 
 env:
   RELEASE_TAG: docker-images-batch
@@ -23,6 +42,35 @@ jobs:
 
       - name: Enable QEMU for multi-arch
         uses: docker/setup-qemu-action@v2
+
+      - name: Mask provided token
+        if: ${{ inputs.ghcr_login && inputs.ghcr_token != '' }}
+        env:
+          PROVIDED_TOKEN: ${{ inputs.ghcr_token }}
+        run: echo "::add-mask::$PROVIDED_TOKEN"
+
+      - name: Report ghcr.io token source
+        if: ${{ inputs.ghcr_login }}
+        env:
+          FROM_INPUT: ${{ inputs.ghcr_token != '' }}
+          FROM_SECRET: ${{ secrets.GHCR_TOKEN != '' }}
+        run: |
+          if [ "$FROM_INPUT" = "true" ]; then
+            echo "✅ 使用本次运行输入的 GitHub Token 登录 ghcr.io"
+          elif [ "$FROM_SECRET" = "true" ]; then
+            echo "✅ 使用仓库密钥 GHCR_TOKEN 登录 ghcr.io（建议使用带 read:packages 权限的 PAT）"
+          else
+            echo "⚠️ 未提供 Token 且未配置 GHCR_TOKEN，回退到内置的 GITHUB_TOKEN。"
+            echo "   内置令牌只能访问本工作流可见的包，跨仓库私有包需要 PAT。"
+          fi
+
+      - name: Login to ghcr.io with GitHub Token
+        if: ${{ inputs.ghcr_login }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ inputs.ghcr_username || secrets.GHCR_USERNAME || github.actor }}
+          password: ${{ inputs.ghcr_token || secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Pull and save images
         run: |
