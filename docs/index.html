@@ -194,10 +194,10 @@
         <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
           <i class="fas fa-key text-amber-600 text-sm"></i>
           <span>授权码</span>
-          <span class="text-xs font-normal light-text-light dark-text-light" id="apiKeyHint">（填写了下方 GitHub Token 时可留空）</span>
+          <span class="text-xs text-red-400 ml-1">*</span>
         </label>
         <div class="relative">
-          <input type="password" id="apiKey" placeholder="请输入授权码" class="w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 transition">
+          <input type="password" id="apiKey" placeholder="请输入授权码" class="w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 transition" required>
           <i class="fas fa-lock absolute right-4 top-1/2 -translate-y-1/2 light-text-light dark-text-light text-sm"></i>
         </div>
       </div>
@@ -294,10 +294,22 @@ themeToggle.addEventListener('click', () => {
 const WORKER_URL = 'https://docker.myfiles.ccwu.cc';
 const GITHUB_API = 'https://api.github.com';
 const GITHUB_REPO = 'jianghuaangte/download-docker-images';
+const PRIVATE_GITHUB_REPO = 'jianghangte/private-download-docker-images';
 const WORKFLOW_FILE = 'batch-pull-docker.yml';
+const PRIVATE_WORKFLOW_FILE = 'batch-pull-private-docker.yml';
 const RELEASE_TAG = 'docker-images-batch';
-const RELEASE_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${RELEASE_TAG}`;
-const RELEASE_DOWNLOAD_URL = `https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}`;
+
+function getActiveRepo() {
+  return ghcrTokenInput.value.trim() ? PRIVATE_GITHUB_REPO : GITHUB_REPO;
+}
+
+function getReleaseApiUrl() {
+  return `${GITHUB_API}/repos/${getActiveRepo()}/releases/tags/${RELEASE_TAG}`;
+}
+
+function getReleaseDownloadUrl() {
+  return `https://github.com/${getActiveRepo()}/releases/download/${RELEASE_TAG}`;
+}
 
 const form = document.getElementById('dockerForm');
 const imageListTextarea = document.getElementById('imageList');
@@ -315,9 +327,9 @@ let releaseAssets = [];
 // 获取加速后的下载链接
 function getAcceleratedUrl(path) {
   let mirror = mirrorPrefixInput.value.trim();
-  if (!mirror) return `https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_TAG}/${path}`;
+  if (!mirror) return `${getReleaseDownloadUrl()}/${path}`;
   mirror = mirror.replace(/\/+$/, '');
-  return `${mirror}/${RELEASE_DOWNLOAD_URL}/${path}`;
+  return `${mirror}${getReleaseDownloadUrl()}/${path}`;
 }
 
 // 获取 Release 文件列表
@@ -328,7 +340,7 @@ async function fetchReleaseAssets() {
     const headers = { 'Accept': 'application/vnd.github+json' };
     const token = ghcrTokenInput.value.trim();
     if (token) headers['Authorization'] = `Bearer ${token}`;
-    const response = await fetch(RELEASE_API_URL, {
+    const response = await fetch(getReleaseApiUrl(), {
       headers: headers,
       signal: controller.signal,
       cache: 'no-store'
@@ -376,7 +388,7 @@ function formatSize(bytes) {
 }
 
 // 创建任务行
-function createTaskRow(imageName) {
+function createTaskRow(imageName, isPrivate) {
   const container = document.createElement('div');
   container.className = "task-item";
   container.dataset.image = imageName;
@@ -387,6 +399,7 @@ function createTaskRow(imageName) {
     <div class="flex items-center gap-2 flex-1 min-w-0">
       <i class="fab fa-docker text-emerald-500 text-sm flex-shrink-0"></i>
       <span class="font-mono text-sm font-semibold truncate light-text-primary dark-text-primary" title="${escapeHtml(imageName)}">${escapeHtml(imageName)}</span>
+      ${isPrivate ? '<span class="text-xs text-amber-400 dark:text-amber-300">私有</span>' : ''}
     </div>
     <span class="status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-gray dark-badge-gray">⏳ 等待触发</span>
   `;
@@ -411,7 +424,54 @@ function createTaskRow(imageName) {
   const fileListDiv = downloadSection.querySelector('.file-list');
   const infoMsg = downloadSection.querySelector('.info-msg');
   
-  return { container, statusBadge, checkBtn, downloadAllBtn, fileListDiv, infoMsg, imageName };
+  return { container, statusBadge, checkBtn, downloadAllBtn, fileListDiv, infoMsg, imageName, isPrivate };
+}
+
+// 下载私有 Release 资产（必须带 Token，不能走加速/匿名地址）
+async function downloadPrivateAsset(asset, btn) {
+  const original = btn.textContent;
+  btn.textContent = '下载中…';
+  btn.style.pointerEvents = 'none';
+
+  try {
+    const token = ghcrTokenInput.value.trim();
+    if (!token) throw new Error('下载私有资产需要 GitHub Token');
+    const res = await fetch(
+      `${GITHUB_API}/repos/${PRIVATE_GITHUB_REPO}/releases/assets/${asset.id}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/octet-stream'
+        },
+        redirect: 'follow'
+      }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = asset.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) {
+    btn.textContent = '下载失败';
+    btn.style.pointerEvents = '';
+    throw e;
+  }
+  btn.textContent = original;
+  btn.style.pointerEvents = '';
+}
+
+// 生成单个文件的下载 HTML：公开用加速链接，私有用带 Token 的按钮
+function fileDownloadHtml(file, isPrivate) {
+  if (!isPrivate) {
+    const downloadUrl = getAcceleratedUrl(file.name);
+    return `<a href="${downloadUrl}" download class="text-emerald-600 hover:text-emerald-700" target="_blank"><i class="fas fa-download"></i></a>`;
+  }
+  return `<button class="file-dl-btn text-xs font-medium rounded bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-700"><i class="fas fa-download"></i></button>`;
 }
 
 // 更新任务显示
@@ -419,7 +479,7 @@ async function updateTaskDisplay(imageName) {
   const record = statusRowsMap.get(imageName);
   if (!record) return;
   
-  const { fileListDiv, downloadAllBtn, infoMsg, statusBadge } = record;
+  const { fileListDiv, downloadAllBtn, infoMsg, statusBadge, isPrivate } = record;
   
   const { complete, files, size, isSplit, safeName } = checkImageComplete(imageName);
   
@@ -427,6 +487,7 @@ async function updateTaskDisplay(imageName) {
     fileListDiv.innerHTML = '<div class="text-muted">暂无可用文件</div>';
     downloadAllBtn.disabled = true;
     downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-bg-gray dark-bg-gray light-text-muted dark-text-muted";
+    downloadAllBtn.onclick = null;
     return;
   }
   
@@ -434,12 +495,11 @@ async function updateTaskDisplay(imageName) {
   if (isSplit) {
     filesHtml = `<div class="mb-2 text-amber-600 dark:text-amber-400"><i class="fas fa-cut"></i> 镜像已分割为 ${files.length} 个分片:</div>`;
     files.forEach((file, idx) => {
-      const downloadUrl = getAcceleratedUrl(file.name);
       filesHtml += `
         <div class="file-item flex items-center justify-between gap-2 light-bg-gray dark-bg-gray p-1 rounded mb-1">
           <span class="truncate">📦 分片 ${String(idx + 1).padStart(2, '0')}: ${file.name}</span>
           <span class="text-muted text-xs">${formatSize(file.size)}</span>
-          <a href="${downloadUrl}" download class="text-emerald-600 hover:text-emerald-700" target="_blank"><i class="fas fa-download"></i></a>
+          ${fileDownloadHtml(file, isPrivate)}
         </div>
       `;
     });
@@ -457,7 +517,6 @@ async function updateTaskDisplay(imageName) {
     `;
   } else {
     const file = files[0];
-    const downloadUrl = getAcceleratedUrl(file.name);
     const isGz = file.name.endsWith('.tar.gz');
     const loadCmd = isGz 
       ? `gunzip ${file.name} && docker load -i ${file.name.replace('.gz', '')}`
@@ -466,7 +525,7 @@ async function updateTaskDisplay(imageName) {
       <div class="file-item flex items-center justify-between gap-2 light-bg-gray dark-bg-gray p-2 rounded">
         <span><i class="fas fa-file-archive"></i> ${file.name}</span>
         <span class="text-muted text-xs">${formatSize(file.size)}</span>
-        <a href="${downloadUrl}" download class="text-emerald-600 hover:text-emerald-700" target="_blank"><i class="fas fa-download"></i></a>
+        ${fileDownloadHtml(file, isPrivate)}
       </div>
       <div class="mt-2 p-2 light-bg-gray dark-bg-gray rounded text-xs">
         <div><i class="fas fa-terminal"></i> 导入命令:</div>
@@ -477,15 +536,60 @@ async function updateTaskDisplay(imageName) {
   
   fileListDiv.innerHTML = filesHtml;
   
-  if (files.length > 0) {
-    downloadAllBtn.disabled = false;
-    downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-btn-download dark-btn-download";
-    downloadAllBtn.onclick = () => {
-      files.forEach(file => {
-        const url = getAcceleratedUrl(file.name);
-        window.open(url, '_blank');
-      });
-    };
+  // 私有模式下绑定带 Token 的下载事件
+  if (isPrivate) {
+    fileListDiv.querySelectorAll('.file-dl-btn').forEach((btn, idx) => {
+      btn.onclick = async (e) => {
+        e.stopPropagation();
+        try {
+          await downloadPrivateAsset(files[idx], btn);
+        } catch (err) {
+          btn.textContent = '下载失败';
+          btn.style.pointerEvents = '';
+        }
+      };
+    });
+    
+    if (files.length > 0) {
+      downloadAllBtn.disabled = false;
+      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-btn-download dark-btn-download";
+      downloadAllBtn.onclick = async () => {
+        for (const file of files) {
+          const btn = downloadAllBtn;
+          const orig = btn.textContent;
+          btn.textContent = '下载中…';
+          btn.disabled = true;
+          try {
+            await downloadPrivateAsset(file, btn);
+          } catch (err) {
+            // error shown by downloadPrivateAsset (btn text changed to 下载失败)
+          } finally {
+            btn.textContent = orig;
+            btn.disabled = false;
+            btn.style.pointerEvents = '';
+          }
+        }
+      };
+    } else {
+      downloadAllBtn.disabled = true;
+      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-bg-gray dark-bg-gray light-text-muted dark-text-muted";
+      downloadAllBtn.onclick = null;
+    }
+  } else {
+    if (files.length > 0) {
+      downloadAllBtn.disabled = false;
+      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-btn-download dark-btn-download";
+      downloadAllBtn.onclick = () => {
+        files.forEach(file => {
+          const url = getAcceleratedUrl(file.name);
+          window.open(url, '_blank');
+        });
+      };
+    } else {
+      downloadAllBtn.disabled = true;
+      downloadAllBtn.className = "download-all-btn text-xs font-medium px-3 py-1.5 rounded-lg light-bg-gray dark-bg-gray light-text-muted dark-text-muted";
+      downloadAllBtn.onclick = null;
+    }
   }
   
   infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-500"></i> 已就绪，共 ${files.length} 个文件，总计 ${formatSize(size)}`;
@@ -539,7 +643,68 @@ async function ghApi(path, options = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
-// 直接用 GitHub Token 触发工作流，Token 同时用于登录 ghcr.io 拉取私有镜像
+// 下载私有 Release 资产（必须带 Token，不能走加速/匿名地址）
+async function downloadPrivateAsset(asset, btn) {
+  const original = btn.textContent;
+  btn.textContent = '下载中…';
+  btn.style.pointerEvents = 'none';
+
+  try {
+    const token = ghcrTokenInput.value.trim();
+    if (!token) throw new Error('下载私有资产需要 GitHub Token');
+    const res = await fetch(
+      `${GITHUB_API}/repos/${PRIVATE_GITHUB_REPO}/releases/assets/${asset.id}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/octet-stream'
+        },
+        redirect: 'follow'
+      }
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = asset.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch (e) {
+    btn.textContent = '下载失败';
+    btn.style.pointerEvents = '';
+    showMsg($('submitMsg'), 'err', `私有下载失败：${e.message}`);
+    return;
+  }
+  btn.textContent = original;
+  btn.style.pointerEvents = '';
+}
+
+// 先由 Worker 验证授权码，验证通过后再使用 Token 直连 GitHub 触发私有工作流
+async function validateWorkerAuthorization(apiKey) {
+  let response;
+  try {
+    response = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: apiKey, validateOnly: true })
+    });
+  } catch (err) {
+    throw new Error('无法连接授权服务，请检查网络');
+  }
+  let result = null;
+  try { result = await response.json(); } catch (e) { result = null; }
+  if (!result) {
+    throw new Error(`授权服务不支持校验模式（HTTP ${response.status}），需要为 Worker 增加 validateOnly 支持`);
+  }
+  if (!response.ok || !result.success) {
+    throw new Error(result.message || '授权码验证失败');
+  }
+}
+
+// 直接用 GitHub Token 触发私有工作流
 async function triggerByGitHubApi(images, token) {
   const me = await ghApi('/user');
   if (!me.ok) {
@@ -547,25 +712,26 @@ async function triggerByGitHubApi(images, token) {
     throw new Error(`Token 校验失败（HTTP ${me.status}）`);
   }
 
-  const repoInfo = await ghApi(`/repos/${GITHUB_REPO}`);
-  const ref = (repoInfo.ok && repoInfo.data && repoInfo.data.default_branch) || 'main';
+  const repoInfo = await ghApi(`/repos/${PRIVATE_GITHUB_REPO}`);
+  if (!repoInfo.ok) {
+    throw new Error(`无法访问私有仓库，HTTP ${repoInfo.status}`);
+  }
 
-  const res = await ghApi(`/repos/${GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`, {
+  const ref = (repoInfo.data && repoInfo.data.default_branch) || 'main';
+  const res = await ghApi(`/repos/${PRIVATE_GITHUB_REPO}/actions/workflows/${PRIVATE_WORKFLOW_FILE}/dispatches`, {
     method: 'POST',
     body: {
       ref,
       inputs: {
         images: images.join('\n'),
-        ghcr_login: 'true',
-        ghcr_username: me.data.login,
-        ghcr_token: token
+        ghcr_username: me.data.login
       }
     }
   });
 
   if (res.status === 204 || res.ok) return { login: me.data.login };
-  if (res.status === 403) throw new Error('Token 权限不足，需要 repo 和 workflow 权限');
-  if (res.status === 404) throw new Error('工作流不存在或 Token 无权访问该仓库');
+  if (res.status === 403) throw new Error('Token 权限不足，需要 repo、workflow 权限');
+  if (res.status === 404) throw new Error('私有工作流不存在或 Token 无权访问该仓库');
   throw new Error((res.data && res.data.message) || `GitHub 返回 ${res.status}`);
 }
 
@@ -573,7 +739,7 @@ async function triggerByGitHubApi(images, token) {
 async function triggerBatchImages(images, apiKey, token) {
   for (const img of images) {
     if (!statusRowsMap.has(img)) {
-      const task = createTaskRow(img);
+      const task = createTaskRow(img, !!token);
       statusPanel.appendChild(task.container);
       statusRowsMap.set(img, task);
     }
@@ -594,6 +760,7 @@ async function triggerBatchImages(images, apiKey, token) {
     let successNote = '已触发，等待构建完成（约5-15分钟）';
 
     if (token) {
+      await validateWorkerAuthorization(apiKey);
       const info = await triggerByGitHubApi(images, token);
       success = true;
       successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)}），等待构建完成（约5-15分钟）`;
@@ -680,7 +847,7 @@ form.onsubmit = async (e) => {
   const images = rawImages.split('\n').map(s => s.trim()).filter(s => s);
   const apiKey = apiKeyInput.value.trim();
   const token = ghcrTokenInput.value.trim();
-  if (!apiKey && !token) return alert('请填写授权码，或填写 GitHub Token 直接触发');
+  if (!apiKey) return alert('请输入授权码');
   
   if (statusPanel.querySelector('.flex.flex-col.items-center.justify-center.py-10')) {
     statusPanel.innerHTML = '';
