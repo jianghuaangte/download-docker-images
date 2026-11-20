@@ -8,9 +8,10 @@ https://jianghuaangte.github.io/download-docker-images/
 1. 「镜像名称」每行填一个镜像（`#` 开头的行会被忽略）
 2. 填写「授权码」（Cloudflare Worker 校验用）
 3. 选择「打包格式」：`tar`（默认，原始包，下载后直接 `docker load`）或 `tar.gz`（压缩，体积最小）
-4. 若要拉取 `ghcr.io` 私有镜像，再填入「GitHub Token」；页面会触发 **私有仓库** 的工作流，结果上传到私有 Release
-5. 点击「批量触发下载任务」
-6. 打包完成后在右侧任务卡片里「检测文件」并下载（公开镜像走加速地址，私有镜像由 Worker 换签名地址后下载；大文件自动分片）
+4. 选择「架构」：`auto`（默认，按镜像名里的 `arm64` / `amd64` 字样判断，判断不出就是 amd64）或显式 `arm64` / `amd64` / `arm/v7`
+5. 若要拉取 `ghcr.io` 私有镜像，再填入「GitHub Token」；页面会触发 **私有仓库** 的工作流，结果上传到私有 Release
+6. 点击「批量触发下载任务」
+7. 打包完成后在右侧任务卡片里「检测文件」并下载（公开镜像走加速地址，私有镜像由 Worker 换签名地址后下载；大文件自动分片）
 
 格式选择会记在浏览器 localStorage，下次打开沿用上次的值；切换后已有任务卡片会重新检测文件。
 
@@ -68,7 +69,17 @@ Worker 只放行 `tar` / `tar.gz`，其他值回退 `tar`，避免脏值让 GitH
 | `github.com/OWNER/REPO/releases/download/TAG/FILE`（私有仓库，匿名或带 Bearer） | 404 |
 | 同路径（公开仓库） | 302 → 签名地址 |
 
-正确方式是 API 资产端点 `GET /repos/{owner}/{repo}/releases/assets/{id}` + `Accept: application/octet-stream`：返回 **302** 指向一次性签名地址（约 5 分钟有效），也可能返回 200 直接给字节。
+正确方式是 API 资产端点 `GET /repos/{owner}/{repo}/releases/assets/{id}` + `Accept: application/octet-stream`：返回 **302** 指向一次性签名地址，也可能返回 200 直接给字节。
+
+签名地址的时效，三个口径（2026-11-20 实测）：
+
+| 口径 | 值 |
+| --- | --- |
+| SAS `se`（名义截止） | 窗口固定 60 分钟，但起点早于请求时刻，所以每次拿到的剩余 0–60 分钟（实测 36 分钟） |
+| URL 里的 `jwt` | mint + 5 分钟 |
+| 实际可用 | `t+0 / 330s / 900s / 1800s / 3600s` 全部 `206`，一小时后仍能取到 |
+
+原因：`release-assets.githubusercontent.com` 是 CDN，响应会被边缘缓存，签名过期后仍可能命中缓存。所以**别把复制出来的链接当长期地址**（换 POP、缓存淘汰后就失效），页面每次点击都会重新换地址，正常使用不受影响。
 
 浏览器跟着 302 会失败——签名地址不返回 `Access-Control-Allow-Origin`，`fetch` 拿不到响应体（页面表现为「下载失败」）。所以页面的私有下载走三步：
 
@@ -113,6 +124,10 @@ curl -o "$NAME" "$LOC"
 | 任意 | > 900MB | `xxx.part.aa`、`xxx.part.ab` … | 先合并再 load |
 
 分片内容恒为**未压缩的 tar 切片**，和格式选择无关——`tar.gz` 只影响未超限的整包是否压缩。
+
+产物一律**按 tag 引用保存**：即使镜像名写成 `repo:tag@sha256:…`（digest 引用），工作流也会先 `docker tag` 把 tag 打到本地再 `docker save`，所以导入后一定有名字，不会变成 `<none>`。文件名同样不带 digest，例如 `ghcr.io_owner_repo_latest.tar`。
+
+架构由 `docker pull --platform` 从多架构清单里挑选：镜像是多架构时选哪个就拉哪个；只有单架构时选错会直接失败或在 `docker run` 时报 `exec format error`。所以 ARM 设备上离线导入请显式选 `arm64`。
 
 ### tar 文件
 

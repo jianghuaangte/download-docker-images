@@ -37,6 +37,7 @@ export default {
       const images = body.images
       const key = body.key || body.apiKey
       const format = normalizeFormat(body.format)
+      const platform = normalizePlatform(body.platform)
 
       // 只校验授权码，不触发工作流（前端私有镜像路径会先调这个）
       if (body.validateOnly === true) {
@@ -66,7 +67,8 @@ export default {
           ref: 'main',
           inputs: {
             images: imagesString,
-            format: format
+            format: format,
+            platform: platform
           }
         })
       })
@@ -74,8 +76,9 @@ export default {
       if (ghRes.ok) {
         return json({
           success: true,
-          message: `Batch workflow triggered for ${images.length} images (${format})`,
-          format: format
+          message: `Batch workflow triggered for ${images.length} images (${format}, ${platform})`,
+          format: format,
+          platform: platform
         }, 200)
       }
 
@@ -100,11 +103,20 @@ const PRIVATE_REPO = 'jianghuaangte/private-download-docker-images'
 const ALLOWED_FORMATS = ['tar', 'tar.gz']
 const DEFAULT_FORMAT = 'tar'
 
-// 只允许工作流声明过的两种取值，其余一律回退默认值，避免 dispatch 因未知 input 返回 422
+const ALLOWED_PLATFORMS = ['auto', 'linux/amd64', 'linux/arm64', 'linux/arm/v7']
+const DEFAULT_PLATFORM = 'auto'
+
+// 只允许工作流声明过的取值，其余一律回退默认值，避免 dispatch 因未知 input 返回 422
 function normalizeFormat(value) {
   if (typeof value !== 'string') return DEFAULT_FORMAT
   const v = value.trim().toLowerCase()
   return ALLOWED_FORMATS.includes(v) ? v : DEFAULT_FORMAT
+}
+
+function normalizePlatform(value) {
+  if (typeof value !== 'string') return DEFAULT_PLATFORM
+  const v = value.trim().toLowerCase()
+  return ALLOWED_PLATFORMS.includes(v) ? v : DEFAULT_PLATFORM
 }
 
 // GET /repos/{owner}/{repo}/releases/assets/{id} + Accept: octet-stream

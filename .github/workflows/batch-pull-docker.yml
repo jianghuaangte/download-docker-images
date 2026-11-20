@@ -15,6 +15,16 @@ on:
           - tar
           - tar.gz
         default: tar
+      platform:
+        description: '目标架构：auto（按镜像名猜，默认）或显式指定'
+        required: false
+        type: choice
+        options:
+          - auto
+          - linux/amd64
+          - linux/arm64
+          - linux/arm/v7
+        default: auto
       ghcr_login:
         description: '是否登录 ghcr.io（使用 GitHub Token 拉取私有/受限镜像）'
         required: false
@@ -84,6 +94,7 @@ jobs:
         env:
           IMAGES_RAW: ${{ inputs.images }}
           INPUT_FORMAT: ${{ inputs.format }}
+          PLATFORM_INPUT: ${{ inputs.platform }}
         run: |
           set -u
 
@@ -94,6 +105,14 @@ jobs:
           esac
           echo "Package format: $FORMAT"
           echo "PACK_FORMAT=$FORMAT" >> "$GITHUB_ENV"
+
+          # 目标架构：显式指定优先，auto 时按镜像名猜（镜像名里没写架构就默认 amd64）
+          case "${PLATFORM_INPUT:-}" in
+            linux/amd64|linux/arm64|linux/arm/v7) PLATFORM="$PLATFORM_INPUT" ;;
+            *) PLATFORM='auto' ;;
+          esac
+          echo "Platform mode: $PLATFORM"
+          echo "TARGET_PLATFORM_MODE=$PLATFORM" >> "$GITHUB_ENV"
 
           # 去掉注释行、空行、首尾空白和 CRLF，剩下的才是镜像
           IMAGES=$(printf '%s\n' "$IMAGES_RAW" \
@@ -132,21 +151,44 @@ jobs:
               fi
             }
 
-            TARGET_PLATFORM=$(detect_arch "$image")
+            if [ "$PLATFORM" = 'auto' ]; then
+              TARGET_PLATFORM=$(detect_arch "$image")
+            else
+              TARGET_PLATFORM="$PLATFORM"
+            fi
             echo "Detected architecture: $TARGET_PLATFORM"
 
-            # 为文件名创建安全名称（保留原始镜像名）
-            SAFE_NAME=$(echo "$image" | tr '/' '_' | tr ':' '_')
+            # 引用可能是 repo:tag@sha256:…（digest 优先），按 digest 保存会丢掉 tag，
+            # 导入后就成了 <none>。所以规整出一个 tag 引用，save 时用它。
+            TAG_REF="${image%%@*}"
+            LAST_SEG="${TAG_REF##*/}"
+            case "$LAST_SEG" in
+              *:*) ;;
+              *) TAG_REF="${TAG_REF}:latest" ;;
+            esac
+            # 文件名同样去掉 @digest 部分，避免文件名里塞 64 位哈希
+            SAFE_NAME=$(printf '%s' "$TAG_REF" | tr '/' '_' | tr ':' '_')
             FINAL_NAME="${SAFE_NAME}"
+            echo "Save reference: $TAG_REF"
+            echo "File name: ${FINAL_NAME}.tar"
 
             echo "Pulling $image for platform $TARGET_PLATFORM..."
-            if ! docker pull --platform $TARGET_PLATFORM "$image"; then
+            if ! docker pull --platform "$TARGET_PLATFORM" "$image"; then
               echo "❌ Failed to pull $image, skipping..."
               continue
             fi
 
-            echo "Saving $image..."
-            docker save "$image" -o "${FINAL_NAME}.tar"
+            # 保证镜像带 tag，否则 docker save 出来的 tar 里 RepoTags 为空
+            IMAGE_ID=$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)
+            if [ -n "$IMAGE_ID" ]; then
+              docker tag "$IMAGE_ID" "$TAG_REF" || true
+            else
+              echo "⚠️ 拿不到镜像 ID，直接按原引用保存"
+              TAG_REF="$image"
+            fi
+
+            echo "Saving $TAG_REF..."
+            docker save "$TAG_REF" -o "${FINAL_NAME}.tar"
 
             FILE_SIZE=$(stat -c%s "${FINAL_NAME}.tar")
             FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
@@ -184,7 +226,7 @@ jobs:
         run: |
           gh release create ${{ env.RELEASE_TAG }} \
             --title "Docker Images Batch - $(date '+%Y-%m-%d %H:%M:%S')" \
-            --notes "镜像列表:\n${{ inputs.images }}\n打包格式: $PACK_FORMAT" \
+            --notes "镜像列表:\n${{ inputs.images }}\n打包格式: $PACK_FORMAT\n目标架构: $TARGET_PLATFORM_MODE" \
             --repo ${{ github.repository }}
         env:
           GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}
