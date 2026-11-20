@@ -96,6 +96,21 @@
     border-color: #10b981;
     outline: none;
   }
+
+  body.dark select {
+    background-color: #0f172a;
+    border-color: #475569;
+    color: #e2e8f0;
+  }
+  body.dark select:focus {
+    border-color: #10b981;
+    outline: none;
+  }
+  body.dark select option {
+    background-color: #0f172a;
+    color: #e2e8f0;
+  }
+
   
   body.dark .scrollbar-custom::-webkit-scrollbar-track { background: #1e293b; }
   body.dark .scrollbar-custom::-webkit-scrollbar-thumb { background: #475569; }
@@ -187,7 +202,21 @@
         <textarea id="imageList" placeholder="例如:&#10;nginx:latest&#10;linuxserver/obsidian:latest&#10;mysql:8.0"
           class="w-full border rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 transition font-mono text-sm"
           rows="8" required></textarea>
-        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 大镜像(>900MB)会自动分割成多个文件</p>
+        <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 大镜像(&gt;900MB)会自动分割成多个文件</p>
+      </div>
+
+      <div>
+        <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
+          <i class="fas fa-file-archive text-purple-500 text-sm"></i>
+          <span>打包格式</span>
+        </label>
+        <div class="relative">
+          <select id="packFormat" class="appearance-none w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 transition font-mono text-sm cursor-pointer">
+            <option value="tar" selected>tar</option>
+            <option value="tar.gz">tar.gz</option>
+          </select>
+          <i class="fas fa-chevron-down absolute right-4 top-1/2 -translate-y-1/2 text-xs pointer-events-none light-text-light dark-text-light"></i>
+        </div>
       </div>
 
       <div>
@@ -298,6 +327,8 @@ const PRIVATE_GITHUB_REPO = 'jianghuaangte/private-download-docker-images';
 const WORKFLOW_FILE = 'batch-pull-docker.yml';
 const PRIVATE_WORKFLOW_FILE = 'batch-pull-private-docker.yml';
 const RELEASE_TAG = 'docker-images-batch';
+const DEFAULT_PACK_FORMAT = 'tar';
+const PACK_FORMAT_STORAGE_KEY = 'dockerPackFormat';
 
 function getActiveRepo() {
   return ghcrTokenInput.value.trim() ? PRIVATE_GITHUB_REPO : GITHUB_REPO;
@@ -320,6 +351,28 @@ const resetMirrorBtn = document.getElementById('resetMirror');
 const statusPanel = document.getElementById('statusPanel');
 const clearAllStatusBtn = document.getElementById('clearAllStatus');
 const refreshReleaseBtn = document.getElementById('refreshReleaseBtn');
+const packFormatInput = document.getElementById('packFormat');
+
+// 打包格式，只接受工作流声明过的两种取值；默认 tar
+function getPackFormat() {
+  const v = packFormatInput ? packFormatInput.value : DEFAULT_PACK_FORMAT;
+  return v === 'tar.gz' ? 'tar.gz' : DEFAULT_PACK_FORMAT;
+}
+
+// 记住上次选择
+try {
+  const savedFormat = localStorage.getItem(PACK_FORMAT_STORAGE_KEY);
+  if (packFormatInput && (savedFormat === 'tar' || savedFormat === 'tar.gz')) {
+    packFormatInput.value = savedFormat;
+  }
+} catch (e) {}
+
+if (packFormatInput) {
+  packFormatInput.addEventListener('change', () => {
+    try { localStorage.setItem(PACK_FORMAT_STORAGE_KEY, getPackFormat()); } catch (e) {}
+    refreshAllTasks();
+  });
+}
 
 let statusRowsMap = new Map();
 let releaseAssets = [];
@@ -357,26 +410,34 @@ async function fetchReleaseAssets() {
   }
 }
 
-// 检查镜像是否完整
+// 检查镜像是否完整（同时支持 .tar.gz 与 .tar 两种打包格式）
 function checkImageComplete(imageName) {
   const safeName = imageName.replace(/\//g, '_').replace(/:/g, '_');
   const relatedFiles = releaseAssets.filter(asset => asset.name.startsWith(safeName));
-  
-  if (relatedFiles.length === 0) return { complete: false, files: [], size: 0 };
-  
-  const hasCompleteFile = relatedFiles.some(f => f.name === `${safeName}.tar.gz`);
-  if (hasCompleteFile) {
-    const file = relatedFiles.find(f => f.name === `${safeName}.tar.gz`);
-    return { complete: true, files: [file], size: file.size, isSplit: false, safeName: safeName };
+
+  if (relatedFiles.length === 0) {
+    return { complete: false, files: [], size: 0, isSplit: false, safeName: safeName, packFormat: null, partFormat: null };
   }
-  
-  const partFiles = relatedFiles.filter(f => f.name.includes('.part.'));
+
+  // 整包优先：.tar.gz 优先于 .tar（两者不会同时存在，Release 每次重建）
+  for (const fmt of ['tar.gz', 'tar']) {
+    const fileName = `${safeName}.${fmt}`;
+    const file = relatedFiles.find(f => f.name === fileName);
+    if (file) {
+      return { complete: true, files: [file], size: file.size, isSplit: false, safeName: safeName, packFormat: fmt, partFormat: null };
+    }
+  }
+
+  // 分片恒为未压缩 tar 的切片，合并后得到 .tar
+  const partFiles = relatedFiles
+    .filter(f => f.name.includes('.part.'))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   if (partFiles.length > 0) {
     const totalSize = partFiles.reduce((sum, f) => sum + f.size, 0);
-    return { complete: true, files: partFiles, size: totalSize, isSplit: true, safeName: safeName };
+    return { complete: true, files: partFiles, size: totalSize, isSplit: true, safeName: safeName, packFormat: null, partFormat: 'tar' };
   }
-  
-  return { complete: false, files: relatedFiles, size: 0, isSplit: false, safeName: safeName };
+
+  return { complete: false, files: relatedFiles, size: 0, isSplit: false, safeName: safeName, packFormat: null, partFormat: null };
 }
 
 // 格式化文件大小
@@ -427,44 +488,6 @@ function createTaskRow(imageName, isPrivate) {
   return { container, statusBadge, checkBtn, downloadAllBtn, fileListDiv, infoMsg, imageName, isPrivate };
 }
 
-// 下载私有 Release 资产（必须带 Token，不能走加速/匿名地址）
-async function downloadPrivateAsset(asset, btn) {
-  const original = btn.textContent;
-  btn.textContent = '下载中…';
-  btn.style.pointerEvents = 'none';
-
-  try {
-    const token = ghcrTokenInput.value.trim();
-    if (!token) throw new Error('下载私有资产需要 GitHub Token');
-    const res = await fetch(
-      `${GITHUB_API}/repos/${PRIVATE_GITHUB_REPO}/releases/assets/${asset.id}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/octet-stream'
-        },
-        redirect: 'follow'
-      }
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = asset.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-  } catch (e) {
-    btn.textContent = '下载失败';
-    btn.style.pointerEvents = '';
-    throw e;
-  }
-  btn.textContent = original;
-  btn.style.pointerEvents = '';
-}
-
 // 生成单个文件的下载 HTML：公开用加速链接，私有用带 Token 的按钮
 function fileDownloadHtml(file, isPrivate) {
   if (!isPrivate) {
@@ -481,7 +504,7 @@ async function updateTaskDisplay(imageName) {
   
   const { fileListDiv, downloadAllBtn, infoMsg, statusBadge, isPrivate } = record;
   
-  const { complete, files, size, isSplit, safeName } = checkImageComplete(imageName);
+  const { complete, files, size, isSplit, safeName, packFormat, partFormat } = checkImageComplete(imageName);
   
   if (!complete || files.length === 0) {
     fileListDiv.innerHTML = '<div class="text-muted">暂无可用文件</div>';
@@ -493,7 +516,7 @@ async function updateTaskDisplay(imageName) {
   
   let filesHtml = '';
   if (isSplit) {
-    filesHtml = `<div class="mb-2 text-amber-600 dark:text-amber-400"><i class="fas fa-cut"></i> 镜像已分割为 ${files.length} 个分片:</div>`;
+    filesHtml = `<div class="mb-2 text-amber-600 dark:text-amber-400"><i class="fas fa-cut"></i> 镜像已分割为 ${files.length} 个分片（合并后为 ${safeName}.tar）:</div>`;
     files.forEach((file, idx) => {
       filesHtml += `
         <div class="file-item flex items-center justify-between gap-2 light-bg-gray dark-bg-gray p-1 rounded mb-1">
@@ -592,7 +615,8 @@ async function updateTaskDisplay(imageName) {
     }
   }
   
-  infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-500"></i> 已就绪，共 ${files.length} 个文件，总计 ${formatSize(size)}`;
+  const formatLabel = isSplit ? `${partFormat || 'tar'} 分片` : (packFormat || DEFAULT_PACK_FORMAT);
+  infoMsg.innerHTML = `<i class="fas fa-check-circle text-green-500"></i> 已就绪，共 ${files.length} 个文件，总计 ${formatSize(size)} · ${formatLabel}`;
   statusBadge.innerText = "✅ 可下载";
   statusBadge.className = "status-badge text-xs px-2 py-1 rounded-full whitespace-nowrap light-badge-emerald dark-badge-emerald";
 }
@@ -675,7 +699,7 @@ async function downloadPrivateAsset(asset, btn) {
   } catch (e) {
     btn.textContent = '下载失败';
     btn.style.pointerEvents = '';
-    showMsg($('submitMsg'), 'err', `私有下载失败：${e.message}`);
+    console.error('私有下载失败:', e.message);
     return;
   }
   btn.textContent = original;
@@ -705,7 +729,7 @@ async function validateWorkerAuthorization(apiKey) {
 }
 
 // 直接用 GitHub Token 触发私有工作流
-async function triggerByGitHubApi(images, token) {
+async function triggerByGitHubApi(images, token, format) {
   const me = await ghApi('/user');
   if (!me.ok) {
     if (me.status === 401) throw new Error('Token 无效或已过期');
@@ -724,7 +748,8 @@ async function triggerByGitHubApi(images, token) {
       ref,
       inputs: {
         images: images.join('\n'),
-        ghcr_username: me.data.login
+        ghcr_username: me.data.login,
+        format: format
       }
     }
   });
@@ -736,7 +761,7 @@ async function triggerByGitHubApi(images, token) {
 }
 
 // 触发批量构建
-async function triggerBatchImages(images, apiKey, token) {
+async function triggerBatchImages(images, apiKey, token, format) {
   for (const img of images) {
     if (!statusRowsMap.has(img)) {
       const task = createTaskRow(img, !!token);
@@ -761,18 +786,22 @@ async function triggerBatchImages(images, apiKey, token) {
 
     if (token) {
       await validateWorkerAuthorization(apiKey);
-      const info = await triggerByGitHubApi(images, token);
+      const info = await triggerByGitHubApi(images, token, format);
       success = true;
-      successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)}），等待构建完成（约5-15分钟）`;
+      successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)} · ${format}），等待构建完成（约5-15分钟）`;
     } else {
       const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images, key: apiKey })
+        body: JSON.stringify({ images, key: apiKey, format })
       });
       const result = await response.json();
       success = !!result.success;
       failMessage = result.message;
+      // 新 Worker 会在响应里回带实际转发的 format；没有这个字段说明还是老版本
+      if (success && result.format !== format && format !== DEFAULT_PACK_FORMAT) {
+        successNote = `⚠️ Worker 未回带格式确认，可能仍按默认 ${DEFAULT_PACK_FORMAT} 打包；要出 ${format} 需要重新部署 Worker`;
+      }
     }
 
     if (success) {
@@ -844,16 +873,18 @@ form.onsubmit = async (e) => {
   e.preventDefault();
   const rawImages = imageListTextarea.value.trim();
   if (!rawImages) return alert('请输入至少一个镜像');
-  const images = rawImages.split('\n').map(s => s.trim()).filter(s => s);
+  // 以 # 开头的行当注释忽略（与工作流里的清理逻辑一致）
+  const images = rawImages.split('\n').map(s => s.trim()).filter(s => s && !s.startsWith('#'));
   const apiKey = apiKeyInput.value.trim();
   const token = ghcrTokenInput.value.trim();
+  const format = getPackFormat();
   if (!apiKey) return alert('请输入授权码');
   
   if (statusPanel.querySelector('.flex.flex-col.items-center.justify-center.py-10')) {
     statusPanel.innerHTML = '';
   }
   
-  await triggerBatchImages(images, apiKey, token);
+  await triggerBatchImages(images, apiKey, token, format);
 };
 
 // 显示 / 隐藏 Token

@@ -25,6 +25,7 @@ export default {
       const body = await request.json()
       const images = body.images
       const key = body.key || body.apiKey
+      const format = normalizeFormat(body.format)
 
       // 只校验授权码，不触发工作流（前端私有镜像路径会先调这个）
       if (body.validateOnly === true) {
@@ -52,14 +53,18 @@ export default {
         },
         body: JSON.stringify({
           ref: 'main',
-          inputs: { images: imagesString }
+          inputs: {
+            images: imagesString,
+            format: format
+          }
         })
       })
 
       if (ghRes.ok) {
         return json({
           success: true,
-          message: `Batch workflow triggered for ${images.length} images`
+          message: `Batch workflow triggered for ${images.length} images (${format})`,
+          format: format
         }, 200)
       }
 
@@ -78,6 +83,16 @@ export default {
 const PUBLIC_OWNER = 'jianghuaangte'
 const PUBLIC_REPO = 'download-docker-images'
 const PUBLIC_WORKFLOW_FILE = 'batch-pull-docker.yml'
+
+const ALLOWED_FORMATS = ['tar', 'tar.gz']
+const DEFAULT_FORMAT = 'tar'
+
+// 只允许工作流声明过的两种取值，其余一律回退默认值，避免 dispatch 因未知 input 返回 422
+function normalizeFormat(value) {
+  if (typeof value !== 'string') return DEFAULT_FORMAT
+  const v = value.trim().toLowerCase()
+  return ALLOWED_FORMATS.includes(v) ? v : DEFAULT_FORMAT
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
