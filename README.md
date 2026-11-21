@@ -8,10 +8,9 @@ https://jianghuaangte.github.io/download-docker-images/
 1. 「镜像名称」每行填一个镜像（`#` 开头的行会被忽略）
 2. 填写「授权码」（Cloudflare Worker 校验用）
 3. 选择「打包格式」：`tar`（默认，原始包，下载后直接 `docker load`）或 `tar.gz`（压缩，体积最小）
-4. 选择「架构」：`auto`（默认，按镜像名里的 `arm64` / `amd64` 字样判断，判断不出就是 amd64）或显式 `arm64` / `amd64` / `arm/v7`
-5. 若要拉取 `ghcr.io` 私有镜像，再填入「GitHub Token」；页面会触发 **私有仓库** 的工作流，结果上传到私有 Release
-6. 点击「批量触发下载任务」
-7. 打包完成后在右侧任务卡片里「检测文件」并下载（公开镜像走加速地址，私有镜像由 Worker 换签名地址后下载；大文件自动分片）
+4. 若要拉取 `ghcr.io` 私有镜像，再填入「GitHub Token」；页面会触发 **私有仓库** 的工作流，结果上传到私有 Release
+5. 点击「批量触发下载任务」
+6. 打包完成后在右侧任务卡片里「检测文件」并下载（公开镜像走加速地址，私有镜像由 Worker 换签名地址后下载；大文件自动分片）
 
 格式选择会记在浏览器 localStorage，下次打开沿用上次的值；切换后已有任务卡片会重新检测文件。
 
@@ -127,7 +126,29 @@ curl -o "$NAME" "$LOC"
 
 产物一律**按 tag 引用保存**：即使镜像名写成 `repo:tag@sha256:…`（digest 引用），工作流也会先 `docker tag` 把 tag 打到本地再 `docker save`，所以导入后一定有名字，不会变成 `<none>`。文件名同样不带 digest，例如 `ghcr.io_owner_repo_latest.tar`。
 
-架构由 `docker pull --platform` 从多架构清单里挑选：镜像是多架构时选哪个就拉哪个；只有单架构时选错会直接失败或在 `docker run` 时报 `exec format error`。所以 ARM 设备上离线导入请显式选 `arm64`。
+架构通过参数传给 `docker pull/save --platform <值>`，**完全原样**：不补前缀、不判断架构、不做别名映射。**留空就不传 `--platform`**，由 docker / skopeo 按运行器自身平台选择（多架构镜像通常取 `linux/amd64`，因为 runner 是 amd64）。
+
+`--platform` 的语法是 `os/arch[/variant]`，`os` 不一定是 linux：
+
+| 传入 | 实际 `--platform` |
+| --- | --- |
+| 空（或 `auto`） | 不带这个参数，交给 docker 默认 |
+| `linux/arm64` | `linux/arm64` |
+| `linux/riscv64` | `linux/riscv64` |
+| `windows/amd64` | `windows/amd64` |
+| `wasip1/wasm` | `wasip1/wasm` |
+| `loong64`（裸值） | `loong64`（原样交出去，docker 认不认由它决定） |
+
+界面上不提供架构选择框，两种指定方式：
+
+| 方式 | 用法 |
+| --- | --- |
+| 页面 URL 参数 | `https://jianghuaangte.github.io/download-docker-images/?arch=linux/arm64` |
+| 手动 Run workflow | `platform` 输入直接填 `linux/arm64` / `windows/amd64` / … |
+
+skopeo 兜底时会把 `os/arch[/variant]` 拆成 `--override-os` / `--override-arch` / `--override-variant` 使用（例如 `windows/amd64` → `--override-os windows --override-arch amd64`）；没指定平台时不加任何 override，skopeo 用自己的默认平台。
+
+> 注意：镜像只有 arm64 变体时，不指定平台会拉取失败（runner 是 amd64）。这种镜像要把 `platform` 写成 `linux/arm64`。
 
 ### tar 文件
 

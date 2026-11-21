@@ -221,22 +221,6 @@
 
       <div>
         <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
-          <i class="fas fa-microchip text-sky-500 text-sm"></i>
-          <span>架构</span>
-        </label>
-        <div class="relative">
-          <select id="targetPlatform" class="appearance-none w-full border rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-emerald-400 transition font-mono text-sm cursor-pointer">
-            <option value="auto" selected>auto</option>
-            <option value="linux/arm64">arm64</option>
-            <option value="linux/amd64">amd64</option>
-            <option value="linux/arm/v7">arm/v7</option>
-          </select>
-          <i class="fas fa-chevron-down absolute right-4 top-1/2 -translate-y-1/2 text-xs pointer-events-none light-text-light dark-text-light"></i>
-        </div>
-      </div>
-
-      <div>
-        <label class="block font-semibold mb-1.5 flex items-center gap-2 light-text-secondary dark-text-secondary">
           <i class="fas fa-key text-amber-600 text-sm"></i>
           <span>授权码</span>
           <span class="text-xs text-red-400 ml-1">*</span>
@@ -344,8 +328,18 @@ const WORKFLOW_FILE = 'batch-pull-docker.yml';
 const PRIVATE_WORKFLOW_FILE = 'batch-pull-private-docker.yml';
 const RELEASE_TAG = 'docker-images-batch';
 const DEFAULT_PACK_FORMAT = 'tar';
+
+// 架构不在界面上暴露：用 URL 参数 ?arch=arm64 指定，缺省交给工作流（amd64）
+function getArchParam() {
+  try {
+    const v = (new URLSearchParams(location.search).get('arch') || '').trim();
+    // 只做字符清洗，不限制具体架构（riscv64、loong64 之类也能用）
+    return /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,63}$/.test(v) ? v : '';
+  } catch (e) {
+    return '';
+  }
+}
 const PACK_FORMAT_STORAGE_KEY = 'dockerPackFormat';
-const PLATFORM_STORAGE_KEY = 'dockerTargetPlatform';
 
 function getActiveRepo() {
   return ghcrTokenInput.value.trim() ? PRIVATE_GITHUB_REPO : GITHUB_REPO;
@@ -388,28 +382,6 @@ if (packFormatInput) {
   packFormatInput.addEventListener('change', () => {
     try { localStorage.setItem(PACK_FORMAT_STORAGE_KEY, getPackFormat()); } catch (e) {}
     refreshAllTasks();
-  });
-}
-
-const ALLOWED_PLATFORMS = ['linux/amd64', 'linux/arm64', 'linux/arm/v7'];
-const platformInput = document.getElementById('targetPlatform');
-
-// 目标架构；auto 表示工作流按镜像名猜（名字里没写架构就是 amd64）
-function getTargetPlatform() {
-  const v = platformInput ? platformInput.value : 'auto';
-  return ALLOWED_PLATFORMS.indexOf(v) >= 0 ? v : 'auto';
-}
-
-try {
-  const savedPlatform = localStorage.getItem(PLATFORM_STORAGE_KEY);
-  if (platformInput && (savedPlatform === 'auto' || ALLOWED_PLATFORMS.indexOf(savedPlatform) >= 0)) {
-    platformInput.value = savedPlatform;
-  }
-} catch (e) {}
-
-if (platformInput) {
-  platformInput.addEventListener('change', () => {
-    try { localStorage.setItem(PLATFORM_STORAGE_KEY, getTargetPlatform()); } catch (e) {}
   });
 }
 
@@ -740,7 +712,7 @@ async function validateWorkerAuthorization(apiKey) {
 }
 
 // 直接用 GitHub Token 触发私有工作流
-async function triggerByGitHubApi(images, token, format, platform) {
+async function triggerByGitHubApi(images, token, format, arch) {
   const me = await ghApi('/user');
   if (!me.ok) {
     if (me.status === 401) throw new Error('Token 无效或已过期');
@@ -757,12 +729,11 @@ async function triggerByGitHubApi(images, token, format, platform) {
     method: 'POST',
     body: {
       ref,
-      inputs: {
+      inputs: Object.assign({
         images: images.join('\n'),
         ghcr_username: me.data.login,
-        format: format,
-        platform: platform
-      }
+        format: format
+      }, arch ? { platform: arch } : {})
     }
   });
 
@@ -773,7 +744,7 @@ async function triggerByGitHubApi(images, token, format, platform) {
 }
 
 // 触发批量构建
-async function triggerBatchImages(images, apiKey, token, format, platform) {
+async function triggerBatchImages(images, apiKey, token, format) {
   for (const img of images) {
     if (!statusRowsMap.has(img)) {
       const task = createTaskRow(img, !!token);
@@ -787,6 +758,8 @@ async function triggerBatchImages(images, apiKey, token, format, platform) {
     record.checkBtn.onclick = () => performCheck(img, true);
   }
   
+  const arch = getArchParam();
+
   const submitBtn = document.getElementById('submitBtn');
   submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 触发中...';
   submitBtn.disabled = true;
@@ -798,14 +771,14 @@ async function triggerBatchImages(images, apiKey, token, format, platform) {
 
     if (token) {
       await validateWorkerAuthorization(apiKey);
-      const info = await triggerByGitHubApi(images, token, format, platform);
+      const info = await triggerByGitHubApi(images, token, format, arch);
       success = true;
-      successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)} · ${format} · ${platform}），等待构建完成（约5-15分钟）`;
+      successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)} · ${format}${arch ? ' · ' + arch : ''}），等待构建完成（约5-15分钟）`;
     } else {
       const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images, key: apiKey, format, platform })
+        body: JSON.stringify(Object.assign({ images, key: apiKey, format }, arch ? { platform: arch } : {}))
       });
       const result = await response.json();
       success = !!result.success;
@@ -890,14 +863,13 @@ form.onsubmit = async (e) => {
   const apiKey = apiKeyInput.value.trim();
   const token = ghcrTokenInput.value.trim();
   const format = getPackFormat();
-  const platform = getTargetPlatform();
   if (!apiKey) return alert('请输入授权码');
   
   if (statusPanel.querySelector('.flex.flex-col.items-center.justify-center.py-10')) {
     statusPanel.innerHTML = '';
   }
   
-  await triggerBatchImages(images, apiKey, token, format, platform);
+  await triggerBatchImages(images, apiKey, token, format);
 };
 
 // 显示 / 隐藏 Token

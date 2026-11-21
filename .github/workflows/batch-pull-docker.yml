@@ -16,15 +16,10 @@ on:
           - tar.gz
         default: tar
       platform:
-        description: '目标架构：auto（按镜像名猜，默认）或显式指定'
+        description: '--platform 的值，形如 os/arch[/variant]：linux/arm64、windows/amd64、wasip1/wasm…；留空则不传，按运行器平台'
         required: false
-        type: choice
-        options:
-          - auto
-          - linux/amd64
-          - linux/arm64
-          - linux/arm/v7
-        default: auto
+        type: string
+        default: amd64
       ghcr_login:
         description: '是否登录 ghcr.io（使用 GitHub Token 拉取私有/受限镜像）'
         required: false
@@ -95,6 +90,8 @@ jobs:
           IMAGES_RAW: ${{ inputs.images }}
           INPUT_FORMAT: ${{ inputs.format }}
           PLATFORM_INPUT: ${{ inputs.platform }}
+          SRC_USER: ${{ inputs.ghcr_username || secrets.GHCR_USERNAME || github.actor }}
+          SRC_PASS: ${{ inputs.ghcr_token || secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -u
 
@@ -106,13 +103,24 @@ jobs:
           echo "Package format: $FORMAT"
           echo "PACK_FORMAT=$FORMAT" >> "$GITHUB_ENV"
 
-          # 目标架构：显式指定优先，auto 时按镜像名猜（镜像名里没写架构就默认 amd64）
-          case "${PLATFORM_INPUT:-}" in
-            linux/amd64|linux/arm64|linux/arm/v7) PLATFORM="$PLATFORM_INPUT" ;;
-            *) PLATFORM='auto' ;;
-          esac
-          echo "Platform mode: $PLATFORM"
-          echo "TARGET_PLATFORM_MODE=$PLATFORM" >> "$GITHUB_ENV"
+          # --platform 的值原样使用，不补前缀、不判断架构（os/arch[/variant]）。
+          # 留空则不传 --platform，由 docker/skopeo 按运行器自身平台选择。
+          TARGET_PLATFORM="${PLATFORM_INPUT:-}"
+          [ "$TARGET_PLATFORM" = 'auto' ] && TARGET_PLATFORM=''
+          if [ -n "$TARGET_PLATFORM" ]; then
+            echo "Target platform: $TARGET_PLATFORM (显式指定，原样传给 --platform)"
+          else
+            echo "Target platform: 未指定（不传 --platform，按运行器平台）"
+          fi
+
+          # 按需带上 --platform
+          pull_image() {
+            if [ -n "$TARGET_PLATFORM" ]; then
+              docker pull --platform "$TARGET_PLATFORM" "$1"
+            else
+              docker pull "$1"
+            fi
+          }
 
           # 去掉注释行、空行、首尾空白和 CRLF，剩下的才是镜像
           IMAGES=$(printf '%s\n' "$IMAGES_RAW" \
@@ -125,38 +133,49 @@ jobs:
             exit 1
           fi
 
+          # 跨架构/containerd store 下，不带 --platform 的 docker save 会按宿主机平台
+          # 找 manifest，而本地只有目标架构的内容 → "content digest ... not found"。
+          save_image() {
+            local ref="$1" plat="$2" out="$3"
+            if [ -n "$plat" ] && docker save --help 2>&1 | grep -q -- '--platform'; then
+              docker save --platform "$plat" "$ref" -o "$out" && return 0
+              rm -f "$out"
+            fi
+            docker save "$ref" -o "$out" && return 0
+            rm -f "$out"
+            return 1
+          }
+
+          # 兜底：skopeo 直接从 registry 按架构归档，完全不经过本地镜像存储
+          skopeo_archive() {
+            local ref="$1" plat="$2" tag="$3" out="$4"
+            if ! command -v skopeo >/dev/null 2>&1; then
+              echo "  安装 skopeo..."
+              sudo apt-get update -qq >/dev/null 2>&1 || true
+              sudo apt-get install -y -qq skopeo >/dev/null 2>&1 || { echo "  skopeo 安装失败"; return 1; }
+            fi
+            # 指定了平台才做 override；没指定就让 skopeo 用自身默认（运行器平台）
+            local args=()
+            if [ -n "$plat" ]; then
+              local os_name='linux' arch variant='' rest
+              case "$plat" in
+                */*/*) os_name="${plat%%/*}"; rest="${plat#*/}"; arch="${rest%%/*}"; variant="${rest#*/}" ;;
+                */*)   os_name="${plat%%/*}"; arch="${plat#*/}" ;;
+                *)     arch="$plat" ;;
+              esac
+              args+=(--override-os "$os_name" --override-arch "$arch")
+              [ -n "$variant" ] && args+=(--override-variant "$variant")
+            fi
+            case "$ref" in
+              ghcr.io/*) args+=(--src-creds "${SRC_USER:-x}:${SRC_PASS:-}") ;;
+            esac
+            echo "  skopeo copy ${args[*]:-（默认平台）}"
+            skopeo copy "${args[@]}" "docker://$ref" "docker-archive:$out:$tag"
+          }
+
           for image in $IMAGES; do
             echo "========================================"
             echo "Processing: $image"
-
-            # 从镜像标签中自动检测架构
-            detect_arch() {
-              local img="$1"
-              # 检测常见的架构标识
-              if echo "$img" | grep -qi "arm64v8\|arm64\|aarch64"; then
-                echo "linux/arm64"
-              elif echo "$img" | grep -qi "arm32v7\|armv7"; then
-                echo "linux/arm/v7"
-              elif echo "$img" | grep -qi "amd64\|x86_64"; then
-                echo "linux/amd64"
-              elif echo "$img" | grep -qi "386\|x86"; then
-                echo "linux/386"
-              elif echo "$img" | grep -qi "ppc64le"; then
-                echo "linux/ppc64le"
-              elif echo "$img" | grep -qi "s390x"; then
-                echo "linux/s390x"
-              else
-                # 默认使用 amd64
-                echo "linux/amd64"
-              fi
-            }
-
-            if [ "$PLATFORM" = 'auto' ]; then
-              TARGET_PLATFORM=$(detect_arch "$image")
-            else
-              TARGET_PLATFORM="$PLATFORM"
-            fi
-            echo "Detected architecture: $TARGET_PLATFORM"
 
             # 引用可能是 repo:tag@sha256:…（digest 优先），按 digest 保存会丢掉 tag，
             # 导入后就成了 <none>。所以规整出一个 tag 引用，save 时用它。
@@ -172,8 +191,8 @@ jobs:
             echo "Save reference: $TAG_REF"
             echo "File name: ${FINAL_NAME}.tar"
 
-            echo "Pulling $image for platform $TARGET_PLATFORM..."
-            if ! docker pull --platform "$TARGET_PLATFORM" "$image"; then
+            echo "Pulling $image..."
+            if ! pull_image "$image"; then
               echo "❌ Failed to pull $image, skipping..."
               continue
             fi
@@ -187,8 +206,14 @@ jobs:
               TAG_REF="$image"
             fi
 
-            echo "Saving $TAG_REF..."
-            docker save "$TAG_REF" -o "${FINAL_NAME}.tar"
+            echo "Saving $TAG_REF (platform $TARGET_PLATFORM)..."
+            if ! save_image "$TAG_REF" "$TARGET_PLATFORM" "${FINAL_NAME}.tar"; then
+              echo "docker save 失败，改用 skopeo 按架构直接归档..."
+              if ! skopeo_archive "$image" "$TARGET_PLATFORM" "$TAG_REF" "${FINAL_NAME}.tar"; then
+                echo "❌ $image 归档失败，跳过"
+                continue
+              fi
+            fi
 
             FILE_SIZE=$(stat -c%s "${FINAL_NAME}.tar")
             FILE_SIZE_MB=$((FILE_SIZE / 1024 / 1024))
@@ -226,7 +251,7 @@ jobs:
         run: |
           gh release create ${{ env.RELEASE_TAG }} \
             --title "Docker Images Batch - $(date '+%Y-%m-%d %H:%M:%S')" \
-            --notes "镜像列表:\n${{ inputs.images }}\n打包格式: $PACK_FORMAT\n目标架构: $TARGET_PLATFORM_MODE" \
+            --notes "镜像列表:\n${{ inputs.images }}\n打包格式: $PACK_FORMAT\n架构: $TARGET_PLATFORM" \
             --repo ${{ github.repository }}
         env:
           GH_TOKEN: ${{ secrets.JIANG_PAT_TOKEN }}

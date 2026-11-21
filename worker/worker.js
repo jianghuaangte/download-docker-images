@@ -103,8 +103,9 @@ const PRIVATE_REPO = 'jianghuaangte/private-download-docker-images'
 const ALLOWED_FORMATS = ['tar', 'tar.gz']
 const DEFAULT_FORMAT = 'tar'
 
-const ALLOWED_PLATFORMS = ['auto', 'linux/amd64', 'linux/arm64', 'linux/arm/v7']
-const DEFAULT_PLATFORM = 'auto'
+// 架构不做白名单：原样透传，工作流只在缺前缀时补 linux/（冷门架构也能用）
+const DEFAULT_ARCH = 'amd64'
+const ARCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,63}$/
 
 // 只允许工作流声明过的取值，其余一律回退默认值，避免 dispatch 因未知 input 返回 422
 function normalizeFormat(value) {
@@ -114,9 +115,11 @@ function normalizeFormat(value) {
 }
 
 function normalizePlatform(value) {
-  if (typeof value !== 'string') return DEFAULT_PLATFORM
+  if (typeof value !== 'string') return DEFAULT_ARCH
   const v = value.trim().toLowerCase()
-  return ALLOWED_PLATFORMS.includes(v) ? v : DEFAULT_PLATFORM
+  if (v === '' || v === 'auto') return DEFAULT_ARCH
+  // 只做字符清洗（防注入/乱码），不判断架构是否存在
+  return ARCH_PATTERN.test(v) ? v : DEFAULT_ARCH
 }
 
 // GET /repos/{owner}/{repo}/releases/assets/{id} + Accept: octet-stream
