@@ -112,6 +112,16 @@ curl -o "$NAME" "$LOC"
 
 `GITHUB_TOKEN_SECRET` 要求能读私有仓库：经典 PAT 需要 `repo`，细粒度 PAT 需要该仓库的 `Contents: Read`。
 
+镜像列表每行一个，可以只写镜像名，也可以在前面加 `--platform <值>`：
+
+```
+nginx:latest
+--platform linux/arm64 ghcr.io/jianghuaangte/pdfflow:latest
+mysql:8.0
+```
+
+行内 `--platform` **只对该行生效**；没写的行按 `platform` 输入（或运行器平台）处理。页面只取 `--platform` 之后的部分做产物名匹配，所以任务卡片和「检测文件」不受影响。看起来是参数（`-` 开头）或含空格的非法引用会被跳过并在日志里提示。
+
 ## 产物格式
 
 每次运行都会先删掉旧的 `docker-images-batch` Release 再重建，所以同一个 Release 里只会存在一种格式的产物。
@@ -139,12 +149,12 @@ curl -o "$NAME" "$LOC"
 | `wasip1/wasm` | `wasip1/wasm` |
 | `loong64`（裸值） | `loong64`（原样交出去，docker 认不认由它决定） |
 
-界面上不提供架构选择框，两种指定方式：
+界面上不提供架构选择框，两种给法：
 
-| 方式 | 用法 |
+| 方式 | 写法 |
 | --- | --- |
-| 页面 URL 参数 | `https://jianghuaangte.github.io/download-docker-images/?arch=linux/arm64` |
-| 手动 Run workflow | `platform` 输入直接填 `linux/arm64` / `windows/amd64` / … |
+| 镜像列表行内（推荐） | `--platform linux/arm64 ghcr.io/owner/app:latest` |
+| 手动 Run workflow | `platform` 输入填 `linux/arm64` / `windows/amd64` / … |
 
 skopeo 兜底时会把 `os/arch[/variant]` 拆成 `--override-os` / `--override-arch` / `--override-variant` 使用（例如 `windows/amd64` → `--override-os windows --override-arch amd64`）；没指定平台时不加任何 override，skopeo 用自己的默认平台。
 

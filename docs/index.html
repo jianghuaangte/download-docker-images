@@ -199,7 +199,7 @@
           <span>镜像名称 (每行一个)</span>
           <span class="text-xs text-red-400 ml-1">*</span>
         </label>
-        <textarea id="imageList" placeholder="例如:&#10;nginx:latest&#10;linuxserver/obsidian:latest&#10;mysql:8.0"
+        <textarea id="imageList" placeholder="例如:&#10;nginx:latest&#10;--platform linux/arm64 ghcr.io/jianghuaangte/pdfflow:latest&#10;mysql:8.0"
           class="w-full border rounded-xl px-4 py-3 focus:ring-2 focus:ring-emerald-400 transition font-mono text-sm"
           rows="8" required></textarea>
         <p class="text-xs mt-1 light-text-light dark-text-light"><i class="fas fa-info-circle"></i> 大镜像(&gt;900MB)会自动分割成多个文件</p>
@@ -329,16 +329,13 @@ const PRIVATE_WORKFLOW_FILE = 'batch-pull-private-docker.yml';
 const RELEASE_TAG = 'docker-images-batch';
 const DEFAULT_PACK_FORMAT = 'tar';
 
-// 架构不在界面上暴露：用 URL 参数 ?arch=arm64 指定，缺省交给工作流（amd64）
-function getArchParam() {
-  try {
-    const v = (new URLSearchParams(location.search).get('arch') || '').trim();
-    // 只做字符清洗，不限制具体架构（riscv64、loong64 之类也能用）
-    return /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,63}$/.test(v) ? v : '';
-  } catch (e) {
-    return '';
-  }
+// 每行可以是 `--platform <值> <镜像>`，也可以只写镜像；把行内平台拆出来
+function parseImageLine(line) {
+  const m = line.match(/^--platform\s+(\S+)\s+(.+)$/);
+  if (m) return { platform: m[1], image: m[2].trim() };
+  return { platform: '', image: line.trim() };
 }
+
 const PACK_FORMAT_STORAGE_KEY = 'dockerPackFormat';
 
 function getActiveRepo() {
@@ -712,7 +709,7 @@ async function validateWorkerAuthorization(apiKey) {
 }
 
 // 直接用 GitHub Token 触发私有工作流
-async function triggerByGitHubApi(images, token, format, arch) {
+async function triggerByGitHubApi(images, token, format) {
   const me = await ghApi('/user');
   if (!me.ok) {
     if (me.status === 401) throw new Error('Token 无效或已过期');
@@ -729,11 +726,11 @@ async function triggerByGitHubApi(images, token, format, arch) {
     method: 'POST',
     body: {
       ref,
-      inputs: Object.assign({
+      inputs: {
         images: images.join('\n'),
         ghcr_username: me.data.login,
         format: format
-      }, arch ? { platform: arch } : {})
+      }
     }
   });
 
@@ -744,7 +741,7 @@ async function triggerByGitHubApi(images, token, format, arch) {
 }
 
 // 触发批量构建
-async function triggerBatchImages(images, apiKey, token, format) {
+async function triggerBatchImages(images, payloadLines, apiKey, token, format) {
   for (const img of images) {
     if (!statusRowsMap.has(img)) {
       const task = createTaskRow(img, !!token);
@@ -758,8 +755,6 @@ async function triggerBatchImages(images, apiKey, token, format) {
     record.checkBtn.onclick = () => performCheck(img, true);
   }
   
-  const arch = getArchParam();
-
   const submitBtn = document.getElementById('submitBtn');
   submitBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> 触发中...';
   submitBtn.disabled = true;
@@ -771,14 +766,14 @@ async function triggerBatchImages(images, apiKey, token, format) {
 
     if (token) {
       await validateWorkerAuthorization(apiKey);
-      const info = await triggerByGitHubApi(images, token, format, arch);
+      const info = await triggerByGitHubApi(payloadLines, token, format);
       success = true;
-      successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)} · ${format}${arch ? ' · ' + arch : ''}），等待构建完成（约5-15分钟）`;
+      successNote = `已通过 GitHub API 触发（${escapeHtml(info.login)} · ${format}），等待构建完成（约5-15分钟）`;
     } else {
       const response = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({ images, key: apiKey, format }, arch ? { platform: arch } : {}))
+        body: JSON.stringify({ images: payloadLines, key: apiKey, format })
       });
       const result = await response.json();
       success = !!result.success;
@@ -859,7 +854,11 @@ form.onsubmit = async (e) => {
   const rawImages = imageListTextarea.value.trim();
   if (!rawImages) return alert('请输入至少一个镜像');
   // 以 # 开头的行当注释忽略（与工作流里的清理逻辑一致）
-  const images = rawImages.split('\n').map(s => s.trim()).filter(s => s && !s.startsWith('#'));
+  const payloadLines = rawImages.split('\n')
+    .map(s => s.trim())
+    .filter(s => s && !s.startsWith('#'));
+  // 展示/匹配用干净镜像名；发给工作流的是原始行（保留行内 --platform）
+  const images = payloadLines.map(parseImageLine).map(e => e.image).filter(s => s);
   const apiKey = apiKeyInput.value.trim();
   const token = ghcrTokenInput.value.trim();
   const format = getPackFormat();
@@ -869,7 +868,7 @@ form.onsubmit = async (e) => {
     statusPanel.innerHTML = '';
   }
   
-  await triggerBatchImages(images, apiKey, token, format);
+  await triggerBatchImages(images, payloadLines, apiKey, token, format);
 };
 
 // 显示 / 隐藏 Token

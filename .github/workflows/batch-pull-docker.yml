@@ -115,10 +115,11 @@ jobs:
 
           # 按需带上 --platform
           pull_image() {
-            if [ -n "$TARGET_PLATFORM" ]; then
-              docker pull --platform "$TARGET_PLATFORM" "$1"
+            local ref="$1" plat="${2:-}"
+            if [ -n "$plat" ]; then
+              docker pull --platform "$plat" "$ref"
             else
-              docker pull "$1"
+              docker pull "$ref"
             fi
           }
 
@@ -173,7 +174,38 @@ jobs:
             skopeo copy "${args[@]}" "docker://$ref" "docker-archive:$out:$tag"
           }
 
-          for image in $IMAGES; do
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+
+            # 允许把 docker 命令片段直接写进列表：`--platform linux/arm64 <image>`。
+            # 镜像列表本身只该写镜像名，这里做兼容并把平台解析出来，仅对该行生效。
+            image="$line"
+            IMAGE_PLATFORM="$TARGET_PLATFORM"
+            case "$image" in
+              --platform\ *)
+                rest="${image#--platform }"
+                case "$rest" in
+                  *" "*)
+                    IMAGE_PLATFORM="${rest%% *}"
+                    image="${rest#* }"
+                    echo "行内 --platform：$IMAGE_PLATFORM（仅该镜像生效）"
+                    ;;
+                  *)
+                    echo "❌ 行内 --platform 后面缺少镜像名，已跳过：$line"
+                    continue
+                    ;;
+                esac
+                ;;
+              -*)
+                echo "❌ 这一行看起来是命令行参数，镜像列表里只写镜像名，已跳过：$line"
+                continue
+                ;;
+              *[[:space:]]*)
+                echo "❌ 镜像名里含空格，不是合法的镜像引用，已跳过：$line"
+                echo "   镜像列表每行只写一个镜像名；架构请填在 platform 参数或页面 ?arch= 里"
+                continue
+                ;;
+            esac
             echo "========================================"
             echo "Processing: $image"
 
@@ -191,8 +223,12 @@ jobs:
             echo "Save reference: $TAG_REF"
             echo "File name: ${FINAL_NAME}.tar"
 
-            echo "Pulling $image..."
-            if ! pull_image "$image"; then
+            if [ -n "$IMAGE_PLATFORM" ]; then
+              echo "Pulling $image (platform $IMAGE_PLATFORM)..."
+            else
+              echo "Pulling $image (默认平台)..."
+            fi
+            if ! pull_image "$image" "$IMAGE_PLATFORM"; then
               echo "❌ Failed to pull $image, skipping..."
               continue
             fi
@@ -206,10 +242,10 @@ jobs:
               TAG_REF="$image"
             fi
 
-            echo "Saving $TAG_REF (platform $TARGET_PLATFORM)..."
-            if ! save_image "$TAG_REF" "$TARGET_PLATFORM" "${FINAL_NAME}.tar"; then
+            echo "Saving $TAG_REF (platform ${IMAGE_PLATFORM:-默认})..."
+            if ! save_image "$TAG_REF" "$IMAGE_PLATFORM" "${FINAL_NAME}.tar"; then
               echo "docker save 失败，改用 skopeo 按架构直接归档..."
-              if ! skopeo_archive "$image" "$TARGET_PLATFORM" "$TAG_REF" "${FINAL_NAME}.tar"; then
+              if ! skopeo_archive "$image" "$IMAGE_PLATFORM" "$TAG_REF" "${FINAL_NAME}.tar"; then
                 echo "❌ $image 归档失败，跳过"
                 continue
               fi
@@ -233,7 +269,7 @@ jobs:
             # 清理镜像节省空间
             docker rmi "$image" || true
             echo "========================================"
-          done
+          done <<< "$IMAGES"
 
           echo "========================================"
           echo "Files generated:"
